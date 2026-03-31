@@ -13,6 +13,7 @@ import { redemptionRoutes } from "./routes/redemptions.js";
 import { merchantRoutes } from "./routes/merchant.js";
 import { subscriptionRoutes } from "./routes/subscription.js";
 import { inviteRoutes } from "./routes/invites.js";
+import { outletRoutes } from "./routes/outlets.js";
 
 type UserVars = {
   user: { id: string; name: string; email: string; [key: string]: unknown };
@@ -52,6 +53,7 @@ app.route("/api/v1/redemptions", redemptionRoutes);
 app.route("/api/v1/merchant", merchantRoutes);
 app.route("/api/v1/subscription", subscriptionRoutes);
 app.route("/api/v1/invites", inviteRoutes);
+app.route("/api/v1/outlets", outletRoutes);
 
 const port = parseInt(process.env.PORT || "3000");
 console.log(`🚀 ZUKA API running on http://localhost:${port}`);
