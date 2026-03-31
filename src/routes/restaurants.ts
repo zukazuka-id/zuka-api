@@ -5,7 +5,7 @@ import {
   outlet,
   restaurantPhoto,
 } from "../db/schema.js";
-import { eq, ilike, or, and, sql } from "drizzle-orm";
+import { eq, ilike, or, and, inArray, sql } from "drizzle-orm";
 import { success, paginated, error } from "../lib/response.js";
 
 const restaurantRoutes = new Hono();
@@ -135,7 +135,7 @@ restaurantRoutes.get("/:id", async (c) => {
     ? await db
         .select()
         .from(restaurantPhoto)
-        .where(sql`${restaurantPhoto.outletId} = ANY(${outletIds})`)
+        .where(inArray(restaurantPhoto.outletId, outletIds))
     : [];
 
   const outletsWithPhotos = outlets.map((o) => ({

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { db } from "../db/index.js";
-import { restaurant, outlet, redemption, account } from "../db/schema.js";
+import { restaurant, outlet, redemption, user } from "../db/schema.js";
 import { eq, and, gte, sql, desc } from "drizzle-orm";
 import { requireRole } from "../middleware/auth.js";
 import { success, error } from "../lib/response.js";
@@ -36,8 +36,8 @@ merchantRoutes.get("/dashboard", async (c) => {
     db.select({ count: sql<number>`count(*)` }).from(redemption).where(eq(redemption.outletId, outletId)),
     db.select({
       id: redemption.id, status: redemption.status, redeemedAt: redemption.redeemedAt,
-      createdAt: redemption.createdAt, memberName: account.name,
-    }).from(redemption).leftJoin(account, eq(redemption.accountId, account.id))
+      createdAt: redemption.createdAt, memberName: user.name,
+    }).from(redemption).leftJoin(user, eq(redemption.accountId, user.id))
       .where(eq(redemption.outletId, outletId)).orderBy(desc(redemption.createdAt)).limit(10),
   ]);
 

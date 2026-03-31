@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { db } from "./index.js";
 import {
-  account,
+  user,
   restaurant,
   outlet,
   accountRole,
@@ -26,7 +26,7 @@ async function seed() {
     accountRole,
     outlet,
     restaurant,
-    account,
+    user,
   ];
   for (const table of tables) {
     await db.delete(table);
@@ -35,7 +35,7 @@ async function seed() {
 
   // --- Accounts (users) ---
   const [owner] = await db
-    .insert(account)
+    .insert(user)
     .values([
       { id: "seed-owner-1", name: "Rina Sari", email: "rina@bogogo.id", emailVerified: true, phoneNumber: "+6281234567890", phoneNumberVerified: true },
       { id: "seed-manager-1", name: "Budi Santoso", email: "budi@bogogo.id", emailVerified: true, phoneNumber: "+6281234567891", phoneNumberVerified: true },

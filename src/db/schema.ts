@@ -14,7 +14,7 @@ import { relations } from "drizzle-orm";
 // Better Auth Core Tables
 // ========================================
 
-export const account = pgTable("account", {
+export const user = pgTable("account", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   email: text("email").unique(),
@@ -31,7 +31,7 @@ export const session = pgTable("session", {
   id: text("id").primaryKey(),
   userId: text("user_id")
     .notNull()
-    .references(() => account.id, { onDelete: "cascade" }),
+    .references(() => user.id, { onDelete: "cascade" }),
   token: text("token").notNull().unique(),
   expiresAt: timestamp("expires_at").notNull(),
   ipAddress: text("ip_address"),
@@ -45,7 +45,7 @@ export const authCredential = pgTable("auth_credential", {
   id: text("id").primaryKey(),
   userId: text("user_id")
     .notNull()
-    .references(() => account.id, { onDelete: "cascade" }),
+    .references(() => user.id, { onDelete: "cascade" }),
   accountId: text("account_id").notNull(),
   providerId: text("provider_id").notNull(),
   accessToken: text("access_token"),
@@ -115,7 +115,7 @@ export const accountRole = pgTable(
       .$defaultFn(() => crypto.randomUUID()),
     accountId: text("account_id")
       .notNull()
-      .references(() => account.id, { onDelete: "cascade" }),
+      .references(() => user.id, { onDelete: "cascade" }),
     outletId: text("outlet_id")
       .notNull()
       .references(() => outlet.id, { onDelete: "cascade" }),
@@ -148,7 +148,7 @@ export const subscription = pgTable("subscription", {
     .$defaultFn(() => crypto.randomUUID()),
   accountId: text("account_id")
     .notNull()
-    .references(() => account.id, { onDelete: "cascade" }),
+    .references(() => user.id, { onDelete: "cascade" }),
   status: text("status").default("active").notNull(), // active | expired | cancelled
   plan: text("plan").notNull(), // monthly | yearly
   startDate: timestamp("start_date").defaultNow(),
@@ -163,7 +163,7 @@ export const redemption = pgTable("redemption", {
     .$defaultFn(() => crypto.randomUUID()),
   accountId: text("account_id")
     .notNull()
-    .references(() => account.id, { onDelete: "cascade" }),
+    .references(() => user.id, { onDelete: "cascade" }),
   outletId: text("outlet_id")
     .notNull()
     .references(() => outlet.id, { onDelete: "cascade" }),
@@ -180,8 +180,8 @@ export const invite = pgTable("invite", {
   code: text("code").notNull().unique(),
   referrerId: text("referrer_id")
     .notNull()
-    .references(() => account.id, { onDelete: "cascade" }),
-  redeemerId: text("redeemer_id").references(() => account.id, {
+    .references(() => user.id, { onDelete: "cascade" }),
+  redeemerId: text("redeemer_id").references(() => user.id, {
     onDelete: "set null",
   }),
   status: text("status").default("active").notNull(), // active | used | expired
@@ -196,7 +196,7 @@ export const notification = pgTable("notification", {
     .$defaultFn(() => crypto.randomUUID()),
   accountId: text("account_id")
     .notNull()
-    .references(() => account.id, { onDelete: "cascade" }),
+    .references(() => user.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
   body: text("body").notNull(),
   type: text("type").notNull(),
@@ -208,7 +208,7 @@ export const notification = pgTable("notification", {
 // Relations
 // ========================================
 
-export const accountRelations = relations(account, ({ many }) => ({
+export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
   authCredentials: many(authCredential),
   roles: many(accountRole),
@@ -219,16 +219,16 @@ export const accountRelations = relations(account, ({ many }) => ({
 }));
 
 export const sessionRelations = relations(session, ({ one }) => ({
-  user: one(account, {
+  user: one(user, {
     fields: [session.userId],
-    references: [account.id],
+    references: [user.id],
   }),
 }));
 
 export const authCredentialRelations = relations(authCredential, ({ one }) => ({
-  user: one(account, {
+  user: one(user, {
     fields: [authCredential.userId],
-    references: [account.id],
+    references: [user.id],
   }),
 }));
 
@@ -247,9 +247,9 @@ export const outletRelations = relations(outlet, ({ one, many }) => ({
 }));
 
 export const accountRoleRelations = relations(accountRole, ({ one }) => ({
-  account: one(account, {
+  account: one(user, {
     fields: [accountRole.accountId],
-    references: [account.id],
+    references: [user.id],
   }),
   outlet: one(outlet, {
     fields: [accountRole.outletId],
@@ -265,16 +265,16 @@ export const restaurantPhotoRelations = relations(restaurantPhoto, ({ one }) => 
 }));
 
 export const subscriptionRelations = relations(subscription, ({ one }) => ({
-  account: one(account, {
+  account: one(user, {
     fields: [subscription.accountId],
-    references: [account.id],
+    references: [user.id],
   }),
 }));
 
 export const redemptionRelations = relations(redemption, ({ one }) => ({
-  account: one(account, {
+  account: one(user, {
     fields: [redemption.accountId],
-    references: [account.id],
+    references: [user.id],
   }),
   outlet: one(outlet, {
     fields: [redemption.outletId],
@@ -283,21 +283,21 @@ export const redemptionRelations = relations(redemption, ({ one }) => ({
 }));
 
 export const inviteRelations = relations(invite, ({ one }) => ({
-  referrer: one(account, {
+  referrer: one(user, {
     fields: [invite.referrerId],
-    references: [account.id],
+    references: [user.id],
     relationName: "referrer",
   }),
-  redeemer: one(account, {
+  redeemer: one(user, {
     fields: [invite.redeemerId],
-    references: [account.id],
+    references: [user.id],
     relationName: "redeemer",
   }),
 }));
 
 export const notificationRelations = relations(notification, ({ one }) => ({
-  account: one(account, {
+  account: one(user, {
     fields: [notification.accountId],
-    references: [account.id],
+    references: [user.id],
   }),
 }));

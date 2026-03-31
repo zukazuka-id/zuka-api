@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { db } from "../db/index.js";
-import { redemption, outlet, subscription, account } from "../db/schema.js";
+import { redemption, outlet, subscription, user } from "../db/schema.js";
 import { eq, and, gte, sql, desc } from "drizzle-orm";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { success, paginated, error } from "../lib/response.js";
@@ -115,7 +115,7 @@ redemptionRoutes.post("/verify", requireRole("owner", "manager", "staff"), async
     .where(eq(redemption.id, red.id))
     .returning();
 
-  const [member] = await db.select({ name: account.name }).from(account).where(eq(account.id, red.accountId)).limit(1);
+  const [member] = await db.select({ name: user.name }).from(user).where(eq(user.id, red.accountId)).limit(1);
   const [out] = await db.select({ label: outlet.label }).from(outlet).where(eq(outlet.id, red.outletId)).limit(1);
 
   return success(c, { redemption: updated, member, outlet: out });
@@ -179,14 +179,67 @@ redemptionRoutes.get("/today", requireRole("owner", "manager", "staff"), async (
       status: redemption.status,
       redeemedAt: redemption.redeemedAt,
       createdAt: redemption.createdAt,
-      memberName: account.name,
+      memberName: user.name,
     })
     .from(redemption)
-    .leftJoin(account, eq(redemption.accountId, account.id))
+    .leftJoin(user, eq(redemption.accountId, user.id))
     .where(and(eq(redemption.outletId, outletId), gte(redemption.createdAt, today)))
     .orderBy(desc(redemption.createdAt));
 
   return success(c, results);
+});
+
+// GET /redemptions/status/:qrToken — poll redemption status (member app)
+redemptionRoutes.get("/status/:qrToken", requireAuth, async (c) => {
+  const qrToken = c.req.param("qrToken");
+  if (!qrToken) {
+    return error(c, "VALIDATION_ERROR", "qrToken is required", 400);
+  }
+
+  const [red] = await db
+    .select()
+    .from(redemption)
+    .where(eq(redemption.qrToken, qrToken))
+    .limit(1);
+
+  if (!red) {
+    return error(c, "NOT_FOUND", "Redemption not found", 404);
+  }
+
+  if (red.status === "confirmed") {
+    const [out] = await db
+      .select({ label: outlet.label })
+      .from(outlet)
+      .where(eq(outlet.id, red.outletId))
+      .limit(1);
+
+    return success(c, {
+      status: "confirmed",
+      redemption: {
+        id: red.id,
+        memberId: red.accountId,
+        restaurantId: red.outletId,
+        restaurantName: out?.label ?? "Restoran",
+        restaurantPhoto: null,
+        redemptionNumber: 1,
+        limit: 1,
+        timestamp: (red.redeemedAt ?? red.createdAt).toISOString(),
+        tokenHash: red.qrToken,
+      },
+    });
+  }
+
+  // Check expiry (5 min)
+  const createdAt = new Date(red.createdAt);
+  if (Date.now() - createdAt.getTime() > 5 * 60 * 1000) {
+    await db
+      .update(redemption)
+      .set({ status: "expired" })
+      .where(eq(redemption.id, red.id));
+    return success(c, { status: "expired" });
+  }
+
+  return success(c, { status: "pending" });
 });
 
 export { redemptionRoutes };
