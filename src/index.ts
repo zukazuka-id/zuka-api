@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { logger } from "hono/logger";
 import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
+import { Scalar } from "@scalar/hono-api-reference";
 import { db, sql } from "./db/index.js";
 import { auth } from "./lib/auth.js";
 import { errorHandler } from "./middleware/error-handler.js";
@@ -14,6 +15,26 @@ import { merchantRoutes } from "./routes/merchant.js";
 import { subscriptionRoutes } from "./routes/subscription.js";
 import { inviteRoutes } from "./routes/invites.js";
 import { outletRoutes } from "./routes/outlets.js";
+import { docsApp } from "./openapi-routes.js";
+
+// ── OpenAPI Spec Generation ───────────────────────────────────
+// Register security scheme on the docsApp (OpenAPIHono)
+docsApp.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", {
+  type: "http",
+  scheme: "bearer",
+  description: "Session token from login/register",
+});
+
+const openApiSpec = docsApp.getOpenAPI31Document({
+  openapi: "3.1.0",
+  info: {
+    title: "ZUKA API",
+    version: "0.1.0",
+    description:
+      "BOGO dining subscription API — members get buy-one-get-one deals at partner restaurants across Indonesia.",
+  },
+  servers: [{ url: "http://localhost:3000", description: "Local development" }],
+});
 
 type UserVars = {
   user: { id: string; name: string; email: string; [key: string]: unknown };
@@ -40,6 +61,18 @@ app.get("/health", async (c) => {
   }
 });
 
+// ── Scalar API Docs ───────────────────────────────────────────
+app.get(
+  "/docs",
+  Scalar({
+    url: "/openapi.json",
+    theme: "purple",
+    layout: "modern",
+  } as any)
+);
+
+app.get("/openapi.json", (c) => c.json(openApiSpec));
+
 // Better Auth handler — all /api/auth/* routes
 app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
@@ -57,4 +90,5 @@ app.route("/api/v1/outlets", outletRoutes);
 
 const port = parseInt(process.env.PORT || "3000");
 console.log(`🚀 ZUKA API running on http://localhost:${port}`);
+console.log(`📖 API Docs: http://localhost:${port}/docs`);
 serve({ fetch: app.fetch, port });
