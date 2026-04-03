@@ -33,7 +33,7 @@ import {
   ResolveMapsResponseSchema,
   DashboardSchema,
   OutletSchema,
-} from "@/lib/openapi";
+} from "./lib/openapi.js";
 
 // This Hono app is only used for OpenAPI spec generation, not for actual routing
 const docsApp = new OpenAPIHono();
