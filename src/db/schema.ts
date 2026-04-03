@@ -7,6 +7,7 @@ import {
   timestamp,
   doublePrecision,
   uniqueIndex,
+  index,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
@@ -127,6 +128,7 @@ export const accountRole = pgTable(
       t.accountId,
       t.outletId
     ),
+    accountRoleOutletIdx: index("account_role_outlet_idx").on(t.outletId),
   })
 );
 
@@ -155,7 +157,9 @@ export const subscription = pgTable("subscription", {
   endDate: timestamp("end_date"),
   paymentMethod: text("payment_method"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  subscriptionAccountStatusIdx: index("subscription_account_status_idx").on(t.accountId, t.status),
+}));
 
 export const redemption = pgTable("redemption", {
   id: text("id")
@@ -171,7 +175,10 @@ export const redemption = pgTable("redemption", {
   status: text("status").default("pending").notNull(), // pending | confirmed | cancelled
   redeemedAt: timestamp("redeemed_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  redemptionAccountOutletIdx: index("redemption_account_outlet_idx").on(t.accountId, t.outletId),
+  redemptionOutletCreatedIdx: index("redemption_outlet_created_idx").on(t.outletId, t.createdAt),
+}));
 
 export const invite = pgTable("invite", {
   id: text("id")
@@ -190,6 +197,8 @@ export const invite = pgTable("invite", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// NOTE: Notification table is reserved for future push notification features.
+// Not currently used by any route handlers.
 export const notification = pgTable("notification", {
   id: text("id")
     .primaryKey()

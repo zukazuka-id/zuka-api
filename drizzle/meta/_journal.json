@@ -8,6 +8,13 @@
       "when": 1774972435014,
       "tag": "0000_volatile_leper_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1775176205046,
+      "tag": "0001_acoustic_wendell_vaughn",
+      "breakpoints": true
     }
   ]
 }
