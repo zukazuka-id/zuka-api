@@ -1,8 +1,8 @@
 import { auth } from "../lib/auth.js";
 import type { Context, Next } from "hono";
 import { db } from "../db/index.js";
-import { accountRole } from "../db/schema.js";
-import { eq } from "drizzle-orm";
+import { accountRole, session, user } from "../db/schema.js";
+import { eq, and, gt } from "drizzle-orm";
 
 type UserVars = {
   user: { id: string; name: string; email: string; [key: string]: unknown };
@@ -11,10 +11,32 @@ type UserVars = {
 };
 
 export async function getSession(c: Context) {
-  const session = await auth.api.getSession({
+  const authHeader = c.req.header("Authorization");
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+
+  if (token) {
+    // Bearer token auth: look up session directly from DB
+    const [sess] = await db
+      .select()
+      .from(session)
+      .where(and(eq(session.token, token), gt(session.expiresAt, new Date())))
+      .limit(1);
+
+    if (!sess) return null;
+
+    const [usr] = await db.select().from(user).where(eq(user.id, sess.userId)).limit(1);
+    if (!usr) return null;
+
+    return {
+      session: sess,
+      user: usr,
+    };
+  }
+
+  // Cookie auth: use better-auth's built-in session handling
+  return auth.api.getSession({
     headers: c.req.raw.headers,
   });
-  return session;
 }
 
 export async function requireAuth(c: Context<{ Variables: UserVars }>, next: Next) {
