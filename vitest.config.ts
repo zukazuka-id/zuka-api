@@ -12,6 +12,10 @@ export default defineConfig({
     environment: "node",
     include: ["src/**/*.test.ts"],
     setupFiles: ["dotenv/config"],
+    pool: "forks",
+    poolOptions: {
+      forks: { singleFork: true },
+    },
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
