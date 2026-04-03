@@ -1,9 +1,11 @@
 import { Hono } from "hono";
+import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index.js";
 import { redemption, outlet, subscription, user } from "../db/schema.js";
 import { eq, and, gte, sql, desc } from "drizzle-orm";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { success, paginated, error } from "../lib/response.js";
+import { createRedemptionSchema, verifyRedemptionSchema } from "../validators/index.js";
 import crypto from "crypto";
 
 type UserVars = {
@@ -15,14 +17,9 @@ type UserVars = {
 const redemptionRoutes = new Hono<{ Variables: UserVars }>();
 
 // POST /redemptions/create — member creates a redemption
-redemptionRoutes.post("/create", requireAuth, async (c) => {
+redemptionRoutes.post("/create", requireAuth, zValidator("json", createRedemptionSchema), async (c) => {
   const user = c.get("user") as UserVars["user"];
-  const body = await c.req.json();
-  const { outletId } = body;
-
-  if (!outletId) {
-    return error(c, "VALIDATION_ERROR", "outletId is required", 400);
-  }
+  const { outletId } = c.req.valid("json");
 
   // Check active subscription
   const [sub] = await db
@@ -46,48 +43,52 @@ redemptionRoutes.post("/create", requireAuth, async (c) => {
     return error(c, "INVALID_OUTLET", "Outlet is not available", 400);
   }
 
-  // Check not already redeemed at this outlet this year
+  // Wrap in transaction to prevent duplicate redemptions under concurrency
   const yearStart = new Date(new Date().getFullYear(), 0, 1);
-  const existing = await db
-    .select()
-    .from(redemption)
-    .where(
-      and(
-        eq(redemption.accountId, user.id),
-        eq(redemption.outletId, outletId),
-        gte(redemption.createdAt, yearStart)
-      )
-    )
-    .limit(1);
-
-  if (existing.length > 0) {
-    return error(c, "ALREADY_REDEEMED", "Already redeemed at this outlet this year", 409);
-  }
-
   const qrToken = crypto.randomBytes(8).toString("hex");
   const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
-  const [red] = await db
-    .insert(redemption)
-    .values({
-      accountId: user.id,
-      outletId,
-      qrToken,
-      status: "pending",
-    })
-    .returning();
+  const result = await db.transaction(async (tx) => {
+    const existing = await tx
+      .select()
+      .from(redemption)
+      .where(
+        and(
+          eq(redemption.accountId, user.id),
+          eq(redemption.outletId, outletId),
+          gte(redemption.createdAt, yearStart)
+        )
+      )
+      .limit(1);
 
-  return success(c, { id: red.id, qrToken, expiresAt: expiresAt.toISOString() }, 201);
+    if (existing.length > 0) {
+      return null;
+    }
+
+    const [red] = await tx
+      .insert(redemption)
+      .values({
+        accountId: user.id,
+        outletId,
+        qrToken,
+        status: "pending",
+      })
+      .returning();
+
+    return red;
+  });
+
+  if (!result) {
+    return error(c, "ALREADY_REDEEMED", "Already redeemed at this outlet this year", 409);
+  }
+
+  return success(c, { id: result.id, qrToken, expiresAt: expiresAt.toISOString() }, 201);
 });
 
 // POST /redemptions/verify — merchant verifies a QR token
-redemptionRoutes.post("/verify", requireRole("owner", "manager", "staff"), async (c) => {
-  const body = await c.req.json();
-  const { qrToken } = body;
-
-  if (!qrToken) {
-    return error(c, "VALIDATION_ERROR", "qrToken is required", 400);
-  }
+redemptionRoutes.post("/verify", requireRole("owner", "manager", "staff"), zValidator("json", verifyRedemptionSchema), async (c) => {
+  const userRoles = c.get("userRoles") as UserVars["userRoles"];
+  const { qrToken } = c.req.valid("json");
 
   const [red] = await db
     .select()
@@ -99,8 +100,18 @@ redemptionRoutes.post("/verify", requireRole("owner", "manager", "staff"), async
     return error(c, "NOT_FOUND", "Invalid QR token", 404);
   }
 
+  // C4: Check outlet access — merchant must have access to this outlet
+  const hasOutletAccess = userRoles.some((r) => r.outletId === red.outletId);
+  if (!hasOutletAccess) {
+    return error(c, "FORBIDDEN", "You do not have access to this outlet", 403);
+  }
+
   if (red.status === "confirmed") {
     return error(c, "ALREADY_REDEEMED", "This QR code has already been redeemed", 409);
+  }
+
+  if (red.status === "expired" || red.status === "cancelled") {
+    return error(c, "INVALID_REDEMPTION", `Redemption is ${red.status}`, 400);
   }
 
   const createdAt = new Date(red.createdAt);
@@ -109,12 +120,18 @@ redemptionRoutes.post("/verify", requireRole("owner", "manager", "staff"), async
     return error(c, "EXPIRED", "QR code has expired", 410);
   }
 
-  const [updated] = await db
+  // C3: Conditional UPDATE prevents double-verification under concurrency
+  const updatedRows = await db
     .update(redemption)
     .set({ status: "confirmed", redeemedAt: new Date() })
-    .where(eq(redemption.id, red.id))
+    .where(and(eq(redemption.id, red.id), eq(redemption.status, "pending")))
     .returning();
 
+  if (updatedRows.length === 0) {
+    return error(c, "ALREADY_REDEEMED", "This QR code has already been redeemed", 409);
+  }
+
+  const updated = updatedRows[0];
   const [member] = await db.select({ name: user.name }).from(user).where(eq(user.id, red.accountId)).limit(1);
   const [out] = await db.select({ label: outlet.label }).from(outlet).where(eq(outlet.id, red.outletId)).limit(1);
 
@@ -169,6 +186,12 @@ redemptionRoutes.get("/today", requireRole("owner", "manager", "staff"), async (
     return error(c, "VALIDATION_ERROR", "outletId is required", 400);
   }
 
+  // Verify merchant has access to this outlet
+  const hasAccess = userRoles.some((r) => r.outletId === outletId);
+  if (!hasAccess) {
+    return error(c, "FORBIDDEN", "You do not have access to this outlet", 403);
+  }
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -191,6 +214,7 @@ redemptionRoutes.get("/today", requireRole("owner", "manager", "staff"), async (
 
 // GET /redemptions/status/:qrToken — poll redemption status (member app)
 redemptionRoutes.get("/status/:qrToken", requireAuth, async (c) => {
+  const user = c.get("user") as UserVars["user"];
   const qrToken = c.req.param("qrToken");
   if (!qrToken) {
     return error(c, "VALIDATION_ERROR", "qrToken is required", 400);
@@ -199,7 +223,7 @@ redemptionRoutes.get("/status/:qrToken", requireAuth, async (c) => {
   const [red] = await db
     .select()
     .from(redemption)
-    .where(eq(redemption.qrToken, qrToken))
+    .where(and(eq(redemption.qrToken, qrToken), eq(redemption.accountId, user.id)))
     .limit(1);
 
   if (!red) {

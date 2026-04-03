@@ -1,9 +1,11 @@
 import { Hono } from "hono";
+import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index.js";
 import { invite, subscription } from "../db/schema.js";
 import { eq, and } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth.js";
 import { success, error } from "../lib/response.js";
+import { generateInvitesSchema, redeemInviteSchema } from "../validators/index.js";
 import crypto from "crypto";
 
 type UserVars = {
@@ -25,10 +27,9 @@ function generateCode(length = 7): string {
 }
 
 // POST /invites/generate — member with active subscription
-inviteRoutes.post("/generate", requireAuth, async (c) => {
+inviteRoutes.post("/generate", requireAuth, zValidator("json", generateInvitesSchema), async (c) => {
   const user = c.get("user") as UserVars["user"];
-  const body = await c.req.json();
-  const count = Math.min(body.count || 1, 10);
+  const { count } = c.req.valid("json");
 
   const [sub] = await db
     .select()
@@ -41,31 +42,29 @@ inviteRoutes.post("/generate", requireAuth, async (c) => {
   }
 
   const codes: { id: string; code: string }[] = [];
-  for (let i = 0; i < count; i++) {
-    const code = generateCode();
-    const [inv] = await db
-      .insert(invite)
-      .values({
-        code,
-        referrerId: user.id,
-        status: "active",
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-      })
-      .returning();
-    codes.push({ id: inv.id, code: inv.code });
-  }
+  await db.transaction(async (tx) => {
+    for (let i = 0; i < count; i++) {
+      const code = generateCode();
+      const [inv] = await tx
+        .insert(invite)
+        .values({
+          code,
+          referrerId: user.id,
+          status: "active",
+          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        })
+        .returning();
+      codes.push({ id: inv.id, code: inv.code });
+    }
+  });
 
   return success(c, codes, 201);
 });
 
-// POST /invites/redeem — anyone with a code
-inviteRoutes.post("/redeem", async (c) => {
-  const body = await c.req.json();
-  const { code } = body;
-
-  if (!code) {
-    return error(c, "VALIDATION_ERROR", "Invite code is required", 400);
-  }
+// POST /invites/redeem — authenticated user redeems a code
+inviteRoutes.post("/redeem", requireAuth, zValidator("json", redeemInviteSchema), async (c) => {
+  const user = c.get("user") as UserVars["user"];
+  const { code } = c.req.valid("json");
 
   const [inv] = await db
     .select()
@@ -86,12 +85,17 @@ inviteRoutes.post("/redeem", async (c) => {
     return error(c, "EXPIRED", "This invite code has expired", 410);
   }
 
-  await db.update(invite).set({ status: "used" }).where(eq(invite.id, inv.id));
+  const now = new Date();
+  await db
+    .update(invite)
+    .set({ status: "used", redeemerId: user.id, redeemedAt: now })
+    .where(eq(invite.id, inv.id));
 
   return success(c, {
     message: "Invite code redeemed successfully",
     code: inv.code,
-    redeemedAt: new Date().toISOString(),
+    redeemerId: user.id,
+    redeemedAt: now.toISOString(),
   });
 });
 

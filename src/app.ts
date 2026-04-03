@@ -5,7 +5,7 @@ import { Scalar } from "@scalar/hono-api-reference";
 import { db, sql } from "./db/index.js";
 import { auth } from "./lib/auth.js";
 import { errorHandler } from "./middleware/error-handler.js";
-import { authRateLimiter } from "./middleware/rate-limiter.js";
+import { authRateLimiter, strictRateLimiter, moderateRateLimiter } from "./middleware/rate-limiter.js";
 import { authRoutes } from "./routes/auth.js";
 import { restaurantRoutes } from "./routes/restaurants.js";
 import { redemptionRoutes } from "./routes/redemptions.js";
@@ -13,6 +13,7 @@ import { merchantRoutes } from "./routes/merchant.js";
 import { subscriptionRoutes } from "./routes/subscription.js";
 import { inviteRoutes } from "./routes/invites.js";
 import { outletRoutes } from "./routes/outlets.js";
+import { adminRoutes } from "./routes/admin.js";
 import { docsApp } from "./openapi-routes.js";
 
 // ── OpenAPI Spec Generation ───────────────────────────────────
@@ -43,10 +44,23 @@ export const app = new Hono<{ Variables: UserVars }>();
 
 // Global middleware
 app.use("*", logger());
-app.use("*", cors({ origin: ["http://localhost:3000", "http://localhost:3001"], credentials: true }));
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(",")
+  : ["http://localhost:3000", "http://localhost:3001", "http://localhost:7490", "http://localhost:7491"];
+
+app.use("*", cors({ origin: ALLOWED_ORIGINS, credentials: true }));
 
 // Global error handler
 app.onError(errorHandler);
+
+// Body size limit — reject oversized payloads
+app.use("*", async (c, next) => {
+  const contentLength = c.req.header("content-length");
+  if (contentLength && parseInt(contentLength) > 1_000_000) {
+    return c.json({ error: { code: "PAYLOAD_TOO_LARGE", message: "Request body exceeds 1MB limit" } }, 413);
+  }
+  await next();
+});
 
 // Health check with DB test
 app.get("/health", async (c) => {
@@ -77,6 +91,11 @@ app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 // Rate limiting on custom auth routes
 app.use("/api/v1/auth/*", authRateLimiter);
 
+// Rate limiting on sensitive write endpoints
+app.use("/api/v1/invites/redeem", strictRateLimiter);
+app.use("/api/v1/redemptions/verify", strictRateLimiter);
+app.use("/api/v1/subscription/create", moderateRateLimiter);
+
 // API v1 routes
 app.route("/api/v1/auth", authRoutes);
 app.route("/api/v1/restaurants", restaurantRoutes);
@@ -85,5 +104,6 @@ app.route("/api/v1/merchant", merchantRoutes);
 app.route("/api/v1/subscription", subscriptionRoutes);
 app.route("/api/v1/invites", inviteRoutes);
 app.route("/api/v1/outlets", outletRoutes);
+app.route("/api/v1/admin", adminRoutes);
 
 export type AppType = typeof app;

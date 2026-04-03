@@ -1,64 +1,52 @@
 import { Hono } from "hono";
+import { zValidator } from "@hono/zod-validator";
 import { auth } from "../lib/auth.js";
 import { requireAuth } from "../middleware/auth.js";
-import { success, error } from "../lib/response.js";
+import { success } from "../lib/response.js";
 import { db } from "../db/index.js";
 import { accountRole, outlet } from "../db/schema.js";
 import { eq } from "drizzle-orm";
+import { z } from "zod";
+import {
+  registerSchema,
+  verifyOtpSchema,
+  merchantLoginSchema,
+  merchantRegisterSchema,
+} from "../validators/index.js";
 
 const authRoutes = new Hono();
 
 // POST /auth/register — phone number registration, trigger OTP
-authRoutes.post("/register", async (c) => {
-  const body = await c.req.json();
-  const { phoneNumber } = body;
-  if (!phoneNumber) {
-    return error(c, "VALIDATION_ERROR", "Phone number is required", 400);
-  }
+authRoutes.post("/register", zValidator("json", registerSchema), async (c) => {
+  const { phoneNumber } = c.req.valid("json");
   const result = await auth.api.sendPhoneNumberOTP({ body: { phoneNumber } });
   return success(c, { message: "OTP sent", result });
 });
 
 // POST /auth/verify-otp — verify OTP, create member account
-authRoutes.post("/verify-otp", async (c) => {
-  const body = await c.req.json();
-  const { phoneNumber, code } = body;
-  if (!phoneNumber || !code) {
-    return error(c, "VALIDATION_ERROR", "Phone number and OTP code are required", 400);
-  }
+// Dev/test OTP bypass is handled at the plugin level in lib/auth.ts
+authRoutes.post("/verify-otp", zValidator("json", verifyOtpSchema), async (c) => {
+  const { phoneNumber, code } = c.req.valid("json");
   const result = await auth.api.verifyPhoneNumber({ body: { phoneNumber, code } });
   return success(c, result);
 });
 
 // POST /auth/merchant/login — email + password login
-authRoutes.post("/merchant/login", async (c) => {
-  const body = await c.req.json();
-  const { email, password } = body;
-  if (!email || !password) {
-    return error(c, "VALIDATION_ERROR", "Email and password are required", 400);
-  }
+authRoutes.post("/merchant/login", zValidator("json", merchantLoginSchema), async (c) => {
+  const { email, password } = c.req.valid("json");
   const result = await auth.api.signInEmail({ body: { email, password }, headers: c.req.raw.headers });
   return success(c, result);
 });
 
 // POST /auth/merchant/register
-authRoutes.post("/merchant/register", async (c) => {
-  const body = await c.req.json();
-  const { name, email, password } = body;
-  if (!name || !email || !password) {
-    return error(c, "VALIDATION_ERROR", "Name, email, and password are required", 400);
-  }
+authRoutes.post("/merchant/register", zValidator("json", merchantRegisterSchema), async (c) => {
+  const { name, email, password } = c.req.valid("json");
   const result = await auth.api.signUpEmail({ body: { name, email, password } });
   return success(c, result, 201);
 });
 
 // POST /auth/merchant/forgot-password
-authRoutes.post("/merchant/forgot-password", async (c) => {
-  const body = await c.req.json();
-  const { email } = body;
-  if (!email) {
-    return error(c, "VALIDATION_ERROR", "Email is required", 400);
-  }
+authRoutes.post("/merchant/forgot-password", zValidator("json", z.object({ email: z.string().email() })), async (c) => {
   return success(c, { message: "Password reset email sent (placeholder)" });
 });
 

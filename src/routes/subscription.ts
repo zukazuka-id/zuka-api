@@ -1,9 +1,11 @@
 import { Hono } from "hono";
+import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index.js";
 import { subscription } from "../db/schema.js";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth.js";
 import { success, error } from "../lib/response.js";
+import { createSubscriptionSchema } from "../validators/index.js";
 
 type UserVars = {
   user: { id: string; name: string; email: string; [key: string]: unknown };
@@ -15,10 +17,9 @@ const subscriptionRoutes = new Hono<{ Variables: UserVars }>();
 subscriptionRoutes.use("*", requireAuth);
 
 // POST /subscription/create
-subscriptionRoutes.post("/create", async (c) => {
+subscriptionRoutes.post("/create", zValidator("json", createSubscriptionSchema), async (c) => {
   const user = c.get("user") as UserVars["user"];
-  const body = await c.req.json();
-  const plan = body.plan || "annual";
+  const { plan } = c.req.valid("json");
 
   const [existing] = await db
     .select()
@@ -62,6 +63,7 @@ subscriptionRoutes.get("/status", async (c) => {
     .select()
     .from(subscription)
     .where(eq(subscription.accountId, user.id))
+    .orderBy(desc(subscription.createdAt))
     .limit(1);
 
   if (!sub) {
@@ -69,6 +71,14 @@ subscriptionRoutes.get("/status", async (c) => {
   }
 
   const isExpired = sub.endDate ? new Date(sub.endDate) < new Date() : false;
+
+  // Persist expired status if DB says active but endDate has passed
+  if (isExpired && sub.status === "active") {
+    await db
+      .update(subscription)
+      .set({ status: "expired" })
+      .where(eq(subscription.id, sub.id));
+  }
 
   return success(c, {
     hasSubscription: true,

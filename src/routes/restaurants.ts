@@ -22,39 +22,54 @@ restaurantRoutes.get("/discover", async (c) => {
     conditions.push(sql`${restaurant.cuisineTags} @> ARRAY[${cuisine}]`);
   }
 
-  const [restaurants, countResult] = await Promise.all([
-    db
-      .select({
-        id: restaurant.id,
-        name: restaurant.name,
-        description: restaurant.description,
-        cuisineTags: restaurant.cuisineTags,
-        halalCertified: restaurant.halalCertified,
-        logo: restaurant.logo,
-        outletId: outlet.id,
-        outletLabel: outlet.label,
-        outletAddress: outlet.address,
-        lat: outlet.lat,
-        lng: outlet.lng,
-        isOpen: outlet.isOpen,
-        bogoLimit: outlet.bogoLimit,
-        avgTableSpend: outlet.avgTableSpend,
-      })
-      .from(restaurant)
-      .innerJoin(outlet, eq(restaurant.id, outlet.restaurantId))
-      .where(and(...conditions))
-      .limit(limit)
-      .offset(offset),
-    db
-      .select({ count: sql<number>`count(distinct ${restaurant.id})` })
-      .from(restaurant)
-      .innerJoin(outlet, eq(restaurant.id, outlet.restaurantId))
-      .where(and(...conditions)),
-  ]);
+  const where = and(...conditions);
+
+  // Count distinct restaurants
+  const [countResult] = await db
+    .select({ count: sql<number>`count(distinct ${restaurant.id})` })
+    .from(restaurant)
+    .innerJoin(outlet, eq(restaurant.id, outlet.restaurantId))
+    .where(where);
+
+  // Fetch distinct restaurant IDs with pagination
+  const distinctIds = await db
+    .selectDistinct({ id: restaurant.id })
+    .from(restaurant)
+    .innerJoin(outlet, eq(restaurant.id, outlet.restaurantId))
+    .where(where)
+    .limit(limit)
+    .offset(offset);
+
+  if (distinctIds.length === 0) {
+    return paginated(c, [], { page, limit, total: 0 });
+  }
+
+  // Fetch full data for those restaurant IDs
+  const idList = distinctIds.map((r) => r.id);
+  const rows = await db
+    .select({
+      id: restaurant.id,
+      name: restaurant.name,
+      description: restaurant.description,
+      cuisineTags: restaurant.cuisineTags,
+      halalCertified: restaurant.halalCertified,
+      logo: restaurant.logo,
+      outletId: outlet.id,
+      outletLabel: outlet.label,
+      outletAddress: outlet.address,
+      lat: outlet.lat,
+      lng: outlet.lng,
+      isOpen: outlet.isOpen,
+      bogoLimit: outlet.bogoLimit,
+      avgTableSpend: outlet.avgTableSpend,
+    })
+    .from(restaurant)
+    .innerJoin(outlet, eq(restaurant.id, outlet.restaurantId))
+    .where(and(...conditions, inArray(restaurant.id, idList)));
 
   // Group outlets by restaurant
-  const grouped = new Map<string, any>();
-  for (const row of restaurants) {
+  const grouped = new Map<string, Record<string, unknown>>();
+  for (const row of rows) {
     if (!grouped.has(row.id)) {
       grouped.set(row.id, {
         id: row.id,
@@ -66,7 +81,7 @@ restaurantRoutes.get("/discover", async (c) => {
         outlets: [],
       });
     }
-    grouped.get(row.id)!.outlets.push({
+    (grouped.get(row.id)!.outlets as Record<string, unknown>[]).push({
       id: row.outletId,
       label: row.outletLabel,
       address: row.outletAddress,
@@ -78,7 +93,7 @@ restaurantRoutes.get("/discover", async (c) => {
     });
   }
 
-  const total = Number(countResult[0]?.count || 0);
+  const total = Number(countResult?.count || 0);
   return paginated(c, Array.from(grouped.values()), { page, limit, total });
 });
 

@@ -1,9 +1,11 @@
 import { Hono } from "hono";
+import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index.js";
 import { restaurant, outlet, redemption, user } from "../db/schema.js";
 import { eq, and, gte, sql, desc } from "drizzle-orm";
 import { requireRole } from "../middleware/auth.js";
 import { success, error } from "../lib/response.js";
+import { updateOutletSchema, updateRestaurantSchema } from "../validators/index.js";
 
 type UserVars = {
   user: { id: string; name: string; email: string; [key: string]: unknown };
@@ -68,7 +70,7 @@ merchantRoutes.get("/outlet/:id", async (c) => {
 });
 
 // PUT /merchant/outlet/:id — owner or manager only
-merchantRoutes.put("/outlet/:id", requireRole("owner", "manager"), async (c) => {
+merchantRoutes.put("/outlet/:id", zValidator("json", updateOutletSchema), async (c) => {
   const id = c.req.param("id")!;
   const userRoles = c.get("userRoles") as UserVars["userRoles"];
 
@@ -77,12 +79,7 @@ merchantRoutes.put("/outlet/:id", requireRole("owner", "manager"), async (c) => 
     return error(c, "FORBIDDEN", "Owner or manager role required", 403);
   }
 
-  const body = await c.req.json();
-  const allowedFields = ["label", "address", "lat", "lng", "operatingHours", "isOpen", "bogoLimit", "whatsappNumber", "phoneContact", "instagramHandle", "status"];
-  const updates: Record<string, unknown> = {};
-  for (const field of allowedFields) {
-    if (body[field] !== undefined) updates[field] = body[field];
-  }
+  const updates = c.req.valid("json");
   if (Object.keys(updates).length === 0) {
     return error(c, "VALIDATION_ERROR", "No valid fields to update", 400);
   }
@@ -92,9 +89,14 @@ merchantRoutes.put("/outlet/:id", requireRole("owner", "manager"), async (c) => 
 });
 
 // GET /merchant/restaurant/:id — owner only
-merchantRoutes.get("/restaurant/:id", requireRole("owner"), async (c) => {
+merchantRoutes.get("/restaurant/:id", async (c) => {
   const id = c.req.param("id")!;
   const userRoles = c.get("userRoles") as UserVars["userRoles"];
+
+  const isOwner = userRoles.some((r) => r.role === "owner");
+  if (!isOwner) {
+    return error(c, "FORBIDDEN", "Owner role required", 403);
+  }
 
   const outlets = await db.select({ id: outlet.id }).from(outlet).where(eq(outlet.restaurantId, id));
   const ownsOutlet = outlets.some((o) => userRoles.some((r) => r.outletId === o.id && r.role === "owner"));
@@ -111,7 +113,7 @@ merchantRoutes.get("/restaurant/:id", requireRole("owner"), async (c) => {
 });
 
 // PUT /merchant/restaurant/:id — owner only
-merchantRoutes.put("/restaurant/:id", requireRole("owner"), async (c) => {
+merchantRoutes.put("/restaurant/:id", zValidator("json", updateRestaurantSchema), async (c) => {
   const id = c.req.param("id")!;
   const userRoles = c.get("userRoles") as UserVars["userRoles"];
 
@@ -121,12 +123,7 @@ merchantRoutes.put("/restaurant/:id", requireRole("owner"), async (c) => {
     return error(c, "FORBIDDEN", "You don't own this restaurant", 403);
   }
 
-  const body = await c.req.json();
-  const allowedFields = ["name", "description", "cuisineTags", "halalCertified", "logo"];
-  const updates: Record<string, unknown> = {};
-  for (const field of allowedFields) {
-    if (body[field] !== undefined) updates[field] = body[field];
-  }
+  const updates = c.req.valid("json");
   if (Object.keys(updates).length === 0) {
     return error(c, "VALIDATION_ERROR", "No valid fields to update", 400);
   }
