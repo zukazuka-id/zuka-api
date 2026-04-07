@@ -31,7 +31,9 @@ const openApiSpec = docsApp.getOpenAPI31Document({
     description:
       "BOGO dining subscription API — members get buy-one-get-one deals at partner restaurants across Indonesia.",
   },
-  servers: [{ url: "http://localhost:3000", description: "Local development" }],
+  servers: [
+    { url: process.env.BETTER_AUTH_URL || "http://localhost:3000", description: "API server" },
+  ],
 });
 
 type UserVars = {
