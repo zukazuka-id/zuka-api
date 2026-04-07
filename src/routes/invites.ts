@@ -16,7 +16,7 @@ type UserVars = {
 
 const inviteRoutes = new Hono<{ Variables: UserVars }>();
 
-function generateCode(length = 7): string {
+function generateCode(length = 8): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code = "";
   const bytes = crypto.randomBytes(length);

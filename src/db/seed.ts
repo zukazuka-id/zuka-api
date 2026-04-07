@@ -155,13 +155,16 @@ async function seed() {
 
   // --- Invite ---
   await db.insert(invite).values([
-    {
-      id: "seed-invite-1",
-      code: "BOGO-ANDI-2026",
-      referrerId: "seed-member-1",
-      status: "active",
-      expiresAt: new Date("2026-04-30"),
-    },
+    { id: "seed-invite-1", code: "A3KN7R2P", referrerId: "seed-member-1", status: "active", expiresAt: new Date("2026-04-30") },
+    { id: "seed-invite-2", code: "H9T4MXW5", referrerId: "seed-member-1", status: "active", expiresAt: new Date("2026-04-30") },
+    { id: "seed-invite-3", code: "P2Q8CNV6", referrerId: "seed-member-1", status: "active", expiresAt: new Date("2026-05-15") },
+    { id: "seed-invite-4", code: "J5RKWS3A", referrerId: "seed-member-1", status: "active", expiresAt: new Date("2026-05-15") },
+    { id: "seed-invite-5", code: "N7B2YH4T", referrerId: "seed-member-1", status: "used", redeemerId: "seed-owner-1", redeemedAt: new Date("2026-03-20T10:00:00Z"), expiresAt: new Date("2026-04-30") },
+    { id: "seed-invite-6", code: "L4F8PGX9", referrerId: "seed-member-1", status: "used", redeemerId: "seed-manager-1", redeemedAt: new Date("2026-03-22T14:30:00Z"), expiresAt: new Date("2026-04-30") },
+    { id: "seed-invite-7", code: "C6M3ZJR7", referrerId: "seed-member-1", status: "expired", expiresAt: new Date("2026-02-01") },
+    { id: "seed-invite-8", code: "W2K9NQH4", referrerId: "seed-member-1", status: "expired", expiresAt: new Date("2026-02-01") },
+    { id: "seed-invite-9", code: "T8V5BLX3", referrerId: "seed-member-1", status: "active", expiresAt: new Date("2026-06-01") },
+    { id: "seed-invite-10", code: "R3Y7DMF6", referrerId: "seed-member-1", status: "active", expiresAt: new Date("2026-06-01") },
   ]);
 
   // --- Notifications ---
