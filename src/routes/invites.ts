@@ -61,9 +61,8 @@ inviteRoutes.post("/generate", requireAuth, zValidator("json", generateInvitesSc
   return success(c, codes, 201);
 });
 
-// POST /invites/redeem — authenticated user redeems a code
-inviteRoutes.post("/redeem", requireAuth, zValidator("json", redeemInviteSchema), async (c) => {
-  const user = c.get("user") as UserVars["user"];
+// POST /invites/redeem — public, no auth required
+inviteRoutes.post("/redeem", zValidator("json", redeemInviteSchema), async (c) => {
   const { code } = c.req.valid("json");
 
   const [inv] = await db
@@ -88,13 +87,12 @@ inviteRoutes.post("/redeem", requireAuth, zValidator("json", redeemInviteSchema)
   const now = new Date();
   await db
     .update(invite)
-    .set({ status: "used", redeemerId: user.id, redeemedAt: now })
+    .set({ status: "used", redeemedAt: now })
     .where(eq(invite.id, inv.id));
 
   return success(c, {
     message: "Invite code redeemed successfully",
     code: inv.code,
-    redeemerId: user.id,
     redeemedAt: now.toISOString(),
   });
 });
