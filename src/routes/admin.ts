@@ -81,7 +81,9 @@ adminRoutes.get("/members/:id", requireAdmin, async (c) => {
     id: invite.id,
     code: invite.code,
     status: invite.status,
-    redeemerId: invite.redeemerId,
+    type: invite.type,
+    maxRedemptions: invite.maxRedemptions,
+    redeemedCount: invite.redeemedCount,
     createdAt: invite.createdAt,
   }).from(invite).where(eq(invite.referrerId, id)).orderBy(desc(invite.createdAt));
 
@@ -191,10 +193,11 @@ adminRoutes.get("/invites", requireAdmin, async (c) => {
       id: invite.id,
       code: invite.code,
       status: invite.status,
+      type: invite.type,
       referrerId: invite.referrerId,
-      redeemerId: invite.redeemerId,
+      maxRedemptions: invite.maxRedemptions,
+      redeemedCount: invite.redeemedCount,
       expiresAt: invite.expiresAt,
-      redeemedAt: invite.redeemedAt,
       createdAt: invite.createdAt,
     })
       .from(invite)
@@ -210,28 +213,43 @@ adminRoutes.get("/invites", requireAdmin, async (c) => {
 
 adminRoutes.post("/invites/create", requireAdmin, async (c) => {
   const body = await c.req.json();
-  const { referrerId, count = 1, expiresDays = 30 } = body;
+  const { referrerId, count = 1, expiresDays = 30, type = "single_use", maxRedemptions = null } = body;
   if (!referrerId) return error(c, "VALIDATION_ERROR", "referrerId is required", 400);
 
+  const expiresAt = new Date(Date.now() + expiresDays * 24 * 60 * 60 * 1000);
   const codes = [];
   for (let i = 0; i < Math.min(count, 100); i++) {
-    const code = Array.from(crypto.getRandomValues(new Uint8Array(4))).map(b => b.toString(16).padStart(2, "0")).join("");
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const code = Array.from(crypto.randomBytes(8)).map(b => chars[b % chars.length]).join("");
     const [created] = await db.insert(invite).values({
       code,
       referrerId,
+      type,
+      maxRedemptions: type === "multi_use" ? maxRedemptions : null,
       status: "active",
-      expiresAt: new Date(Date.now() + expiresDays * 24 * 60 * 60 * 1000),
-    }).returning();
+      expiresAt,
+    }).returning({ id: invite.id, code: invite.code });
     codes.push(created);
   }
 
   return success(c, codes, 201);
 });
 
-adminRoutes.post("/invites/:id/revoke", requireAdmin, async (c) => {
+adminRoutes.post("/invites/:id/deactivate", requireAdmin, async (c) => {
   const { id } = c.req.param();
   const [updated] = await db.update(invite)
-    .set({ status: "expired" })
+    .set({ status: "inactive" })
+    .where(eq(invite.id, id))
+    .returning();
+
+  if (!updated) return error(c, "NOT_FOUND", "Invite not found", 404);
+  return success(c, updated);
+});
+
+adminRoutes.post("/invites/:id/reactivate", requireAdmin, async (c) => {
+  const { id } = c.req.param();
+  const [updated] = await db.update(invite)
+    .set({ status: "active" })
     .where(eq(invite.id, id))
     .returning();
 
