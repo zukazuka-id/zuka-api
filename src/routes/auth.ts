@@ -5,7 +5,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { success } from "../lib/response.js";
 import { db } from "../db/index.js";
 import { accountRole, outlet, invite, inviteRedemption } from "../db/schema.js";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   registerSchema,
@@ -32,62 +32,55 @@ authRoutes.post("/verify-otp", zValidator("json", verifyOtpSchema), async (c) =>
   // If inviteCode provided and OTP verified successfully, claim the invite
   if (inviteCode && result?.user?.id) {
     const userId = result.user.id;
+    const upperCode = inviteCode.toUpperCase();
 
-    const [inv] = await db
-      .select()
-      .from(invite)
-      .where(eq(invite.code, inviteCode.toUpperCase()))
-      .limit(1);
+    await db.transaction(async (tx) => {
+      const [inv] = await tx
+        .select()
+        .from(invite)
+        .where(eq(invite.code, upperCode))
+        .limit(1);
 
-    if (inv && inv.status === "active" && (!inv.expiresAt || new Date(inv.expiresAt) >= new Date())) {
-      // Check single_use not already claimed
+      if (!inv || inv.status !== "active") return;
+      if (inv.expiresAt && new Date(inv.expiresAt) < new Date()) return;
+
+      // For single_use: check if any redemption already exists
       if (inv.type === "single_use") {
-        const [existing] = await db
+        const [existing] = await tx
           .select({ id: inviteRedemption.id })
           .from(inviteRedemption)
-          .where(and(eq(inviteRedemption.inviteId, inv.id), eq(inviteRedemption.accountId, userId)))
+          .where(eq(inviteRedemption.inviteId, inv.id))
           .limit(1);
-
-        if (!existing) {
-          await db.transaction(async (tx) => {
-            await tx.insert(inviteRedemption).values({
-              inviteId: inv.id,
-              accountId: userId,
-              phase: "claimed",
-              claimedAt: new Date(),
-            });
-            await tx
-              .update(invite)
-              .set({ redeemedCount: inv.redeemedCount + 1 })
-              .where(eq(invite.id, inv.id));
-          });
-        }
-      } else if (inv.type === "multi_use") {
-        const canRedeem = inv.maxRedemptions === null || inv.redeemedCount < inv.maxRedemptions;
-        if (canRedeem) {
-          const [existing] = await db
-            .select({ id: inviteRedemption.id })
-            .from(inviteRedemption)
-            .where(and(eq(inviteRedemption.inviteId, inv.id), eq(inviteRedemption.accountId, userId)))
-            .limit(1);
-
-          if (!existing) {
-            await db.transaction(async (tx) => {
-              await tx.insert(inviteRedemption).values({
-                inviteId: inv.id,
-                accountId: userId,
-                phase: "claimed",
-                claimedAt: new Date(),
-              });
-              await tx
-                .update(invite)
-                .set({ redeemedCount: inv.redeemedCount + 1 })
-                .where(eq(invite.id, inv.id));
-            });
-          }
-        }
+        if (existing) return;
       }
-    }
+
+      // For multi_use: check count via atomic conditional update
+      if (inv.type === "multi_use" && inv.maxRedemptions !== null) {
+        const [updated] = await tx
+          .update(invite)
+          .set({ redeemedCount: sql`${invite.redeemedCount} + 1` })
+          .where(and(
+            eq(invite.id, inv.id),
+            sql`${invite.redeemedCount} < ${inv.maxRedemptions}`,
+          ))
+          .returning();
+        if (!updated) return; // limit reached
+      } else {
+        // single_use or unlimited multi_use: just increment
+        await tx
+          .update(invite)
+          .set({ redeemedCount: sql`${invite.redeemedCount} + 1` })
+          .where(eq(invite.id, inv.id));
+      }
+
+      // Insert redemption (unique constraint prevents duplicates)
+      await tx.insert(inviteRedemption).values({
+        inviteId: inv.id,
+        accountId: userId,
+        phase: "claimed",
+        claimedAt: new Date(),
+      }).onConflictDoNothing();
+    });
   }
 
   return success(c, result);
