@@ -1,7 +1,7 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { app } from "../../app.js";
 import { db } from "../../db/index.js";
-import { user, session, subscription } from "../../db/schema.js";
+import { user, session, subscription, invite, inviteRedemption } from "../../db/schema.js";
 import { eq } from "drizzle-orm";
 
 const TEST_PHONE = `+628${Date.now().toString().slice(-9)}`;
@@ -117,5 +117,93 @@ describe("Subscription Integration Tests", () => {
       await db.delete(session).where(eq(session.userId, userId2));
       await db.delete(user).where(eq(user.id, userId2));
     }
+  });
+});
+
+describe("Invite consuming during subscription/create", () => {
+  const CONSUME_PHONE_REFERRER = `+628${Date.now().toString().slice(-8)}R`;
+  let referrerToken = "";
+  let referrerId = "";
+  let freshUserId = "";
+  let freshCode = "";
+
+  afterAll(async () => {
+    if (freshUserId) {
+      await db.delete(inviteRedemption).where(eq(inviteRedemption.accountId, freshUserId));
+      await db.delete(subscription).where(eq(subscription.accountId, freshUserId));
+      await db.delete(session).where(eq(session.userId, freshUserId));
+      await db.delete(user).where(eq(user.id, freshUserId));
+    }
+    if (referrerId) {
+      await db.delete(invite).where(eq(invite.referrerId, referrerId));
+      await db.delete(subscription).where(eq(subscription.accountId, referrerId));
+      await db.delete(session).where(eq(session.userId, referrerId));
+      await db.delete(user).where(eq(user.id, referrerId));
+    }
+  });
+
+  it("subscription/create transitions claimed invite to consumed", async () => {
+    // Create referrer with subscription
+    await app.request("/api/v1/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phoneNumber: CONSUME_PHONE_REFERRER }),
+    });
+    const v1 = await app.request("/api/v1/auth/verify-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phoneNumber: CONSUME_PHONE_REFERRER, code: "123456" }),
+    });
+    const v1Body = await v1.json();
+    referrerToken = v1Body.data?.token ?? v1Body.data?.session?.token ?? "";
+    referrerId = v1Body.data?.user?.id ?? "";
+
+    await app.request("/api/v1/subscription/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${referrerToken}` },
+      body: JSON.stringify({ plan: "annual" }),
+    });
+
+    // Generate invite code
+    const gen = await app.request("/api/v1/invites/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${referrerToken}` },
+      body: JSON.stringify({ count: 1 }),
+    });
+    freshCode = (await gen.json()).data[0].code;
+
+    // Register new user with invite code (claims the invite)
+    const freshPhone = `+628${Date.now().toString().slice(-8)}F`;
+    await app.request("/api/v1/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phoneNumber: freshPhone }),
+    });
+    const v3 = await app.request("/api/v1/auth/verify-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phoneNumber: freshPhone, code: "123456", inviteCode: freshCode }),
+    });
+    const v3Body = await v3.json();
+    const freshToken = v3Body.data?.token ?? v3Body.data?.session?.token ?? "";
+    freshUserId = v3Body.data?.user?.id ?? "";
+
+    // Verify invite is claimed
+    const [before] = await db.select().from(inviteRedemption).where(eq(inviteRedemption.accountId, freshUserId)).limit(1);
+    expect(before).toBeTruthy();
+    expect(before.phase).toBe("claimed");
+
+    // Create subscription — should auto-consume the invite
+    const subRes = await app.request("/api/v1/subscription/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${freshToken}` },
+      body: JSON.stringify({ plan: "annual" }),
+    });
+    expect(subRes.status).toBe(201);
+
+    // Verify invite is now consumed
+    const [after] = await db.select().from(inviteRedemption).where(eq(inviteRedemption.accountId, freshUserId)).limit(1);
+    expect(after.phase).toBe("consumed");
+    expect(after.consumedAt).toBeTruthy();
   });
 });

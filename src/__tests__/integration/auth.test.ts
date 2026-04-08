@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { app } from "../../app.js";
 import { db } from "../../db/index.js";
-import { user, session, verification, subscription } from "../../db/schema.js";
+import { user, session, verification, subscription, invite, inviteRedemption } from "../../db/schema.js";
 import { eq } from "drizzle-orm";
 
 const TEST_PHONE = `+628${Date.now().toString().slice(-9)}`;
@@ -97,5 +97,113 @@ describe("Auth Integration Tests", () => {
     });
     // Better Auth returns 401 or custom error for invalid credentials
     expect([400, 401, 422]).toContain(res.status);
+  });
+});
+
+describe("Invite claiming during verify-otp", () => {
+  const INVITE_PHONE = `+628${Date.now().toString().slice(-8)}9`;
+  let inviteToken = "";
+  let inviteUserId = "";
+  let testCode = "";
+
+  afterAll(async () => {
+    if (inviteUserId) {
+      await db.delete(inviteRedemption).where(eq(inviteRedemption.accountId, inviteUserId));
+      await db.delete(invite).where(eq(invite.referrerId, inviteUserId));
+      await db.delete(subscription).where(eq(subscription.accountId, inviteUserId));
+      await db.delete(session).where(eq(session.userId, inviteUserId));
+      await db.delete(user).where(eq(user.id, inviteUserId));
+    }
+  });
+
+  it("setup: create referrer with subscription and generate invite code", async () => {
+    await app.request("/api/v1/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phoneNumber: INVITE_PHONE }),
+    });
+    const v = await app.request("/api/v1/auth/verify-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phoneNumber: INVITE_PHONE, code: "123456" }),
+    });
+    const vBody = await v.json();
+    inviteToken = vBody.data?.token ?? vBody.data?.session?.token ?? "";
+    inviteUserId = vBody.data?.user?.id ?? "";
+
+    await app.request("/api/v1/subscription/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${inviteToken}` },
+      body: JSON.stringify({ plan: "annual" }),
+    });
+
+    const gen = await app.request("/api/v1/invites/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${inviteToken}` },
+      body: JSON.stringify({ count: 1 }),
+    });
+    const genBody = await gen.json();
+    testCode = genBody.data[0].code;
+    expect(testCode).toBeTruthy();
+  });
+
+  it("verify-otp with inviteCode creates user and claims invite", async () => {
+    const newPhone = `+628${Date.now().toString().slice(-8)}X`;
+    await app.request("/api/v1/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phoneNumber: newPhone }),
+    });
+
+    const res = await app.request("/api/v1/auth/verify-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phoneNumber: newPhone, code: "123456", inviteCode: testCode }),
+    });
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    const newUserId = body.data?.user?.id ?? "";
+    expect(newUserId).toBeTruthy();
+
+    // Verify invite_redemption row exists with phase=claimed
+    const [redemption] = await db
+      .select()
+      .from(inviteRedemption)
+      .where(eq(inviteRedemption.accountId, newUserId))
+      .limit(1);
+    expect(redemption).toBeTruthy();
+    expect(redemption.phase).toBe("claimed");
+
+    // Cleanup
+    await db.delete(inviteRedemption).where(eq(inviteRedemption.accountId, newUserId));
+    await db.delete(session).where(eq(session.userId, newUserId));
+    await db.delete(user).where(eq(user.id, newUserId));
+  });
+
+  it("verify-otp without inviteCode works normally (no invite claimed)", async () => {
+    const newPhone = `+628${Date.now().toString().slice(-8)}Y`;
+    await app.request("/api/v1/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phoneNumber: newPhone }),
+    });
+
+    const res = await app.request("/api/v1/auth/verify-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phoneNumber: newPhone, code: "123456" }),
+    });
+    expect(res.status).toBe(200);
+
+    const newUserId = (await res.json()).data?.user?.id ?? "";
+    const [redemption] = await db
+      .select()
+      .from(inviteRedemption)
+      .where(eq(inviteRedemption.accountId, newUserId))
+      .limit(1);
+    expect(redemption).toBeUndefined();
+
+    await db.delete(session).where(eq(session.userId, newUserId));
+    await db.delete(user).where(eq(user.id, newUserId));
   });
 });
