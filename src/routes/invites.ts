@@ -1,11 +1,11 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index.js";
-import { invite, subscription } from "../db/schema.js";
+import { invite, inviteRedemption, subscription } from "../db/schema.js";
 import { eq, and } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth.js";
 import { success, error } from "../lib/response.js";
-import { generateInvitesSchema, redeemInviteSchema } from "../validators/index.js";
+import { generateInvitesSchema, validateInviteSchema } from "../validators/index.js";
 import crypto from "crypto";
 
 type UserVars = {
@@ -61,8 +61,8 @@ inviteRoutes.post("/generate", requireAuth, zValidator("json", generateInvitesSc
   return success(c, codes, 201);
 });
 
-// POST /invites/redeem — public, no auth required
-inviteRoutes.post("/redeem", zValidator("json", redeemInviteSchema), async (c) => {
+// POST /invites/redeem — public, validation only (no DB writes)
+inviteRoutes.post("/redeem", zValidator("json", validateInviteSchema), async (c) => {
   const { code } = c.req.valid("json");
 
   const [inv] = await db
@@ -80,20 +80,31 @@ inviteRoutes.post("/redeem", zValidator("json", redeemInviteSchema), async (c) =
   }
 
   if (inv.expiresAt && new Date(inv.expiresAt) < new Date()) {
-    await db.update(invite).set({ status: "expired" }).where(eq(invite.id, inv.id));
     return error(c, "EXPIRED", "This invite code has expired", 410);
   }
 
-  const now = new Date();
-  await db
-    .update(invite)
-    .set({ status: "used", redeemedAt: now })
-    .where(eq(invite.id, inv.id));
+  // For single_use: check if any redemption exists (claimed or consumed)
+  if (inv.type === "single_use") {
+    const [existing] = await db
+      .select({ id: inviteRedemption.id })
+      .from(inviteRedemption)
+      .where(eq(inviteRedemption.inviteId, inv.id))
+      .limit(1);
+
+    if (existing) {
+      return error(c, "ALREADY_REDEEMED", "This invite code has already been used", 409);
+    }
+  }
+
+  // For multi_use: check redeemed_count < maxRedemptions (skip if maxRedemptions is null)
+  if (inv.type === "multi_use" && inv.maxRedemptions !== null && inv.redeemedCount >= inv.maxRedemptions) {
+    return error(c, "LIMIT_REACHED", "This invite code has reached its redemption limit", 409);
+  }
 
   return success(c, {
-    message: "Invite code redeemed successfully",
+    valid: true,
     code: inv.code,
-    redeemedAt: now.toISOString(),
+    type: inv.type,
   });
 });
 

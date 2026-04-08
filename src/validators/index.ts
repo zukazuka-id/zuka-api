@@ -40,7 +40,7 @@ export const generateInvitesSchema = z.object({
   count: z.number().int().min(1).max(10).optional().default(1),
 });
 
-export const redeemInviteSchema = z.object({
+export const validateInviteSchema = z.object({
   code: z.string().min(1).max(20),
 });
 
