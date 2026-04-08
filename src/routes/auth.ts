@@ -4,8 +4,8 @@ import { auth } from "../lib/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import { success } from "../lib/response.js";
 import { db } from "../db/index.js";
-import { accountRole, outlet } from "../db/schema.js";
-import { eq } from "drizzle-orm";
+import { accountRole, outlet, invite, inviteRedemption } from "../db/schema.js";
+import { eq, and } from "drizzle-orm";
 import { z } from "zod";
 import {
   registerSchema,
@@ -23,11 +23,73 @@ authRoutes.post("/register", zValidator("json", registerSchema), async (c) => {
   return success(c, { message: "OTP sent", result });
 });
 
-// POST /auth/verify-otp — verify OTP, create member account
+// POST /auth/verify-otp — verify OTP, create member account, optionally claim invite
 // Dev/test OTP bypass is handled at the plugin level in lib/auth.ts
 authRoutes.post("/verify-otp", zValidator("json", verifyOtpSchema), async (c) => {
-  const { phoneNumber, code } = c.req.valid("json");
+  const { phoneNumber, code, inviteCode } = c.req.valid("json");
   const result = await auth.api.verifyPhoneNumber({ body: { phoneNumber, code } });
+
+  // If inviteCode provided and OTP verified successfully, claim the invite
+  if (inviteCode && result?.user?.id) {
+    const userId = result.user.id;
+
+    const [inv] = await db
+      .select()
+      .from(invite)
+      .where(eq(invite.code, inviteCode.toUpperCase()))
+      .limit(1);
+
+    if (inv && inv.status === "active" && (!inv.expiresAt || new Date(inv.expiresAt) >= new Date())) {
+      // Check single_use not already claimed
+      if (inv.type === "single_use") {
+        const [existing] = await db
+          .select({ id: inviteRedemption.id })
+          .from(inviteRedemption)
+          .where(and(eq(inviteRedemption.inviteId, inv.id), eq(inviteRedemption.accountId, userId)))
+          .limit(1);
+
+        if (!existing) {
+          await db.transaction(async (tx) => {
+            await tx.insert(inviteRedemption).values({
+              inviteId: inv.id,
+              accountId: userId,
+              phase: "claimed",
+              claimedAt: new Date(),
+            });
+            await tx
+              .update(invite)
+              .set({ redeemedCount: inv.redeemedCount + 1 })
+              .where(eq(invite.id, inv.id));
+          });
+        }
+      } else if (inv.type === "multi_use") {
+        const canRedeem = inv.maxRedemptions === null || inv.redeemedCount < inv.maxRedemptions;
+        if (canRedeem) {
+          const [existing] = await db
+            .select({ id: inviteRedemption.id })
+            .from(inviteRedemption)
+            .where(and(eq(inviteRedemption.inviteId, inv.id), eq(inviteRedemption.accountId, userId)))
+            .limit(1);
+
+          if (!existing) {
+            await db.transaction(async (tx) => {
+              await tx.insert(inviteRedemption).values({
+                inviteId: inv.id,
+                accountId: userId,
+                phase: "claimed",
+                claimedAt: new Date(),
+              });
+              await tx
+                .update(invite)
+                .set({ redeemedCount: inv.redeemedCount + 1 })
+                .where(eq(invite.id, inv.id));
+            });
+          }
+        }
+      }
+    }
+  }
+
   return success(c, result);
 });
 

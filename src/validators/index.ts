@@ -8,6 +8,7 @@ export const registerSchema = z.object({
 export const verifyOtpSchema = z.object({
   phoneNumber: z.string().min(8).max(15),
   code: z.string().length(6),
+  inviteCode: z.string().min(1).max(20).optional(),
 });
 
 export const merchantLoginSchema = z.object({
