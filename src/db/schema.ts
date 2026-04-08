@@ -188,14 +188,38 @@ export const invite = pgTable("invite", {
   referrerId: text("referrer_id")
     .notNull()
     .references(() => user.id, { onDelete: "cascade" }),
-  redeemerId: text("redeemer_id").references(() => user.id, {
-    onDelete: "set null",
-  }),
-  status: text("status").default("active").notNull(), // active | used | expired
+  type: text("type").default("single_use").notNull(), // single_use | multi_use
+  maxRedemptions: integer("max_redemptions"),          // null = unlimited
+  redeemedCount: integer("redeemed_count").default(0).notNull(),
+  status: text("status").default("active").notNull(),  // active | inactive
   expiresAt: timestamp("expires_at"),
-  redeemedAt: timestamp("redeemed_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+export const inviteRedemption = pgTable(
+  "invite_redemption",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    inviteId: text("invite_id")
+      .notNull()
+      .references(() => invite.id, { onDelete: "cascade" }),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    phase: text("phase").notNull(), // claimed | consumed
+    claimedAt: timestamp("claimed_at").notNull(),
+    consumedAt: timestamp("consumed_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    uniqueInviteAccount: uniqueIndex("unique_invite_account").on(
+      t.inviteId,
+      t.accountId
+    ),
+  })
+);
 
 // NOTE: Notification table is reserved for future push notification features.
 // Not currently used by any route handlers.
@@ -224,6 +248,7 @@ export const userRelations = relations(user, ({ many }) => ({
   subscriptions: many(subscription),
   redemptions: many(redemption),
   sentInvites: many(invite, { relationName: "referrer" }),
+  receivedInvites: many(inviteRedemption),
   notifications: many(notification),
 }));
 
@@ -291,16 +316,23 @@ export const redemptionRelations = relations(redemption, ({ one }) => ({
   }),
 }));
 
-export const inviteRelations = relations(invite, ({ one }) => ({
+export const inviteRelations = relations(invite, ({ one, many }) => ({
   referrer: one(user, {
     fields: [invite.referrerId],
     references: [user.id],
     relationName: "referrer",
   }),
-  redeemer: one(user, {
-    fields: [invite.redeemerId],
+  redemptions: many(inviteRedemption),
+}));
+
+export const inviteRedemptionRelations = relations(inviteRedemption, ({ one }) => ({
+  invite: one(invite, {
+    fields: [inviteRedemption.inviteId],
+    references: [invite.id],
+  }),
+  account: one(user, {
+    fields: [inviteRedemption.accountId],
     references: [user.id],
-    relationName: "redeemer",
   }),
 }));
 
