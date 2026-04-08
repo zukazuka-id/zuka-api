@@ -15,6 +15,13 @@
       "when": 1775176205046,
       "tag": "0001_acoustic_wendell_vaughn",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1775438400000,
+      "tag": "0002_invite_schema_redesign",
+      "breakpoints": true
     }
   ]
 }
