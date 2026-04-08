@@ -34,34 +34,38 @@ subscriptionRoutes.post("/create", zValidator("json", createSubscriptionSchema),
   const amount = plan === "monthly" ? 99000 : 990000;
   const durationDays = plan === "monthly" ? 30 : 365;
 
-  const [sub] = await db
-    .insert(subscription)
-    .values({
-      accountId: user.id,
-      plan,
-      status: "active",
-      startDate: new Date(),
-      endDate: new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000),
-      paymentMethod: "qris",
-    })
-    .returning();
+  const sub = await db.transaction(async (tx) => {
+    const [created] = await tx
+      .insert(subscription)
+      .values({
+        accountId: user.id,
+        plan,
+        status: "active",
+        startDate: new Date(),
+        endDate: new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000),
+        paymentMethod: "qris",
+      })
+      .returning();
 
-  // Auto-consume any claimed invite for this user
-  const [claimed] = await db
-    .select()
-    .from(inviteRedemption)
-    .where(and(
-      eq(inviteRedemption.accountId, user.id),
-      eq(inviteRedemption.phase, "claimed"),
-    ))
-    .limit(1);
+    // Auto-consume any claimed invite for this user
+    const [claimed] = await tx
+      .select()
+      .from(inviteRedemption)
+      .where(and(
+        eq(inviteRedemption.accountId, user.id),
+        eq(inviteRedemption.phase, "claimed"),
+      ))
+      .limit(1);
 
-  if (claimed) {
-    await db
-      .update(inviteRedemption)
-      .set({ phase: "consumed", consumedAt: new Date() })
-      .where(eq(inviteRedemption.id, claimed.id));
-  }
+    if (claimed) {
+      await tx
+        .update(inviteRedemption)
+        .set({ phase: "consumed", consumedAt: new Date() })
+        .where(eq(inviteRedemption.id, claimed.id));
+    }
+
+    return created;
+  });
 
   return success(c, {
     subscriptionId: sub.id,
