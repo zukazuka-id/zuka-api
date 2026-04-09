@@ -1,10 +1,26 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { phoneNumber } from "better-auth/plugins";
+import { phoneNumber, admin, createAccessControl } from "better-auth/plugins";
 
 import { db } from "../db/index.js";
 import * as schema from "../db/schema.js";
 import { sendOtpBypassEmail } from "./email.js";
+
+// Access control for admin plugin
+const ac = createAccessControl({
+  user: ["create", "list", "get", "update", "set-role", "ban", "delete", "set-password"],
+  session: ["list", "revoke", "delete"],
+} as const);
+
+const adminRole = ac.newRole({
+  user: ["create", "list", "get", "update", "set-role", "ban", "delete", "set-password"],
+  session: ["list", "revoke", "delete"],
+});
+
+const userRole = ac.newRole({
+  user: ["get", "update"],
+  session: ["list", "revoke"],
+});
 
 // Dev OTP store: maps phoneNumber → last OTP code sent
 export const devOtpStore = new Map<string, string>();
@@ -78,6 +94,11 @@ export const auth = betterAuth({
         getTempEmail: (phone) => `${phone}@zuka.temp`,
         getTempName: (phone) => phone,
       },
+    }),
+    admin({
+      ac,
+      roles: { admin: adminRole, user: userRole },
+      defaultRole: "user",
     }),
   ],
 });
