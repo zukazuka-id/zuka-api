@@ -54,3 +54,8 @@ export function rateLimiter(options: RateLimitOptions = { windowMs: 60_000, maxR
 export const authRateLimiter = rateLimiter({ windowMs: 60_000, maxRequests: 20 });
 export const strictRateLimiter = rateLimiter({ windowMs: 60_000, maxRequests: 10 });
 export const moderateRateLimiter = rateLimiter({ windowMs: 60_000, maxRequests: 30 });
+
+/** Reset rate limiter state — intended for test teardown only. */
+export function resetRateLimiterState(): void {
+  requests.clear();
+}
