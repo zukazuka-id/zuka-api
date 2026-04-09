@@ -1,6 +1,7 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { phoneNumber, admin, createAccessControl } from "better-auth/plugins";
+import { phoneNumber, admin } from "better-auth/plugins";
+import { createAccessControl } from "better-auth/plugins/access";
 
 import { db } from "../db/index.js";
 import * as schema from "../db/schema.js";
