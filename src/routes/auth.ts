@@ -6,7 +6,6 @@ import { success } from "../lib/response.js";
 import { db } from "../db/index.js";
 import { accountRole, outlet } from "../db/schema.js";
 import { eq } from "drizzle-orm";
-import { z } from "zod";
 import { validateInvite, claimInvite } from "../lib/invite-service.js";
 import {
   registerSchema,
@@ -63,11 +62,6 @@ authRoutes.post("/merchant/register", zValidator("json", merchantRegisterSchema)
   const { name, email, password } = c.req.valid("json");
   const result = await auth.api.signUpEmail({ body: { name, email, password } });
   return success(c, result, 201);
-});
-
-// POST /auth/merchant/forgot-password
-authRoutes.post("/merchant/forgot-password", zValidator("json", z.object({ email: z.string().email() })), async (c) => {
-  return success(c, { message: "Password reset email sent (placeholder)" });
 });
 
 // GET /auth/me — get current user + roles
