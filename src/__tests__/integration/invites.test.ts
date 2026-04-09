@@ -36,7 +36,7 @@ async function setupUserWithSubscription() {
   await app.request("/api/v1/subscription/create", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}` },
-    body: JSON.stringify({ plan: "annual" }),
+    body: JSON.stringify({ plan: "yearly" }),
   });
 }
 

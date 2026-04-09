@@ -55,12 +55,12 @@ describe("Subscription Integration Tests", () => {
     const res = await app.request("/api/v1/subscription/create", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}` },
-      body: JSON.stringify({ plan: "annual" }),
+      body: JSON.stringify({ plan: "yearly" }),
     });
     const body = await res.json();
     expect(res.status).toBe(201);
     expect(body.data.subscriptionId).toBeTruthy();
-    expect(body.data.plan).toBe("annual");
+    expect(body.data.plan).toBe("yearly");
     expect(body.data.amount).toBe(990000);
   });
 
@@ -68,7 +68,7 @@ describe("Subscription Integration Tests", () => {
     const res = await app.request("/api/v1/subscription/create", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}` },
-      body: JSON.stringify({ plan: "annual" }),
+      body: JSON.stringify({ plan: "yearly" }),
     });
     expect(res.status).toBe(409);
   });
@@ -80,7 +80,7 @@ describe("Subscription Integration Tests", () => {
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.data.hasSubscription).toBe(true);
-    expect(body.data.plan).toBe("annual");
+    expect(body.data.plan).toBe("yearly");
     expect(body.data.daysRemaining).toBeGreaterThan(0);
   });
 
@@ -161,7 +161,7 @@ describe("Invite consuming during subscription/create", () => {
     await app.request("/api/v1/subscription/create", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${referrerToken}` },
-      body: JSON.stringify({ plan: "annual" }),
+      body: JSON.stringify({ plan: "yearly" }),
     });
 
     // Generate invite code
@@ -197,7 +197,7 @@ describe("Invite consuming during subscription/create", () => {
     const subRes = await app.request("/api/v1/subscription/create", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${freshToken}` },
-      body: JSON.stringify({ plan: "annual" }),
+      body: JSON.stringify({ plan: "yearly" }),
     });
     expect(subRes.status).toBe(201);
 

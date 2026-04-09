@@ -24,7 +24,7 @@ export const merchantRegisterSchema = z.object({
 
 // Subscription
 export const createSubscriptionSchema = z.object({
-  plan: z.enum(["monthly", "annual"]),
+  plan: z.enum(["monthly", "yearly"]),
 });
 
 // Redemptions

@@ -176,7 +176,7 @@ export const RedemptionTodayItemSchema = z.object({
 // ── Subscription schemas ──────────────────────────────────────
 
 export const CreateSubscriptionRequestSchema = z.object({
-  plan: z.enum(["monthly", "annual"]).optional().default("annual").openapi({ description: "Subscription plan" }),
+  plan: z.enum(["monthly", "yearly"]).optional().default("yearly").openapi({ description: "Subscription plan" }),
 });
 
 export const SubscriptionCreatedSchema = z.object({
