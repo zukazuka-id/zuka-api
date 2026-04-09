@@ -1,7 +1,9 @@
 import { Hono } from "hono";
+import { zValidator } from "@hono/zod-validator";
 import { requireAdmin } from "../middleware/admin.js";
 import { db } from "../db/index.js";
 import { success, error } from "../lib/response.js";
+import { adminCreateInvitesSchema } from "../validators/index.js";
 import {
   user,
   session,
@@ -211,14 +213,16 @@ adminRoutes.get("/invites", requireAdmin, async (c) => {
   return success(c, { invites, total: totalResult[0]?.count ?? 0, page: parseInt(page), limit: parseInt(limit) });
 });
 
-adminRoutes.post("/invites/create", requireAdmin, async (c) => {
-  const body = await c.req.json();
-  const { referrerId, count = 1, expiresDays = 30, type = "single_use", maxRedemptions = null } = body;
-  if (!referrerId) return error(c, "VALIDATION_ERROR", "referrerId is required", 400);
+adminRoutes.post("/invites/create", requireAdmin, zValidator("json", adminCreateInvitesSchema), async (c) => {
+  const { referrerId, count, expiresDays, type, maxRedemptions } = c.req.valid("json");
+
+  // Verify referrer exists
+  const [referrer] = await db.select({ id: user.id }).from(user).where(eq(user.id, referrerId)).limit(1);
+  if (!referrer) return error(c, "NOT_FOUND", "Referrer not found", 404);
 
   const expiresAt = new Date(Date.now() + expiresDays * 24 * 60 * 60 * 1000);
   const codes = [];
-  for (let i = 0; i < Math.min(count, 100); i++) {
+  for (let i = 0; i < count; i++) {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     const code = Array.from(crypto.randomBytes(8)).map(b => chars[b % chars.length]).join("");
     const [created] = await db.insert(invite).values({

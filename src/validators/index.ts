@@ -62,6 +62,15 @@ export const updateOutletSchema = z.object({
   status: outletStatusEnum.optional(),
 });
 
+// Admin
+export const adminCreateInvitesSchema = z.object({
+  referrerId: z.string().min(1),
+  count: z.number().int().min(1).max(100).default(1),
+  expiresDays: z.number().int().min(1).max(365).default(30),
+  type: z.enum(["single_use", "multi_use"]).default("single_use"),
+  maxRedemptions: z.number().int().min(1).nullable().default(null),
+});
+
 export const updateRestaurantSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   description: z.string().max(2000).optional(),
