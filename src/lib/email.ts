@@ -37,7 +37,7 @@ async function sendViaResend(to: string, phoneNumber: string, code: string): Pro
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: "ZUKA <noreply@zuka.id>",
+      from: "ZUKA <onboarding@resend.dev>",
       to,
       subject: "[ZUKA TEST OTP]",
       html: `
