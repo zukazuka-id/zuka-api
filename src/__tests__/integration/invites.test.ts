@@ -290,4 +290,55 @@ describe("Invites Integration Tests", () => {
     const redemptions = await db.select().from(inviteRedemption).where(eq(inviteRedemption.inviteId, inv.id));
     expect(redemptions.length).toBe(1);
   });
+
+  it("POST /invites/generate — returns 429 when daily quota exceeded", async () => {
+    // Use a fresh user to avoid interference from other tests
+    const freshPhone = `+628${Date.now().toString().slice(-9)}q`;
+    await app.request("/api/v1/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phoneNumber: freshPhone }),
+    });
+    const freshVerify = await app.request("/api/v1/auth/verify-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phoneNumber: freshPhone, code: "123456" }),
+    });
+    const freshBody = await freshVerify.json();
+    const freshToken = freshBody.data?.token ?? freshBody.data?.session?.token ?? "";
+    const freshUserId = freshBody.data?.user?.id ?? "";
+
+    await app.request("/api/v1/subscription/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${freshToken}` },
+      body: JSON.stringify({ plan: "yearly" }),
+    });
+
+    // Generate 10 codes (the default daily limit)
+    const genRes = await app.request("/api/v1/invites/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${freshToken}` },
+      body: JSON.stringify({ count: 10 }),
+    });
+    expect(genRes.status).toBe(201);
+
+    // 11th should fail with 429 QUOTA_EXCEEDED
+    const exceedRes = await app.request("/api/v1/invites/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${freshToken}` },
+      body: JSON.stringify({ count: 1 }),
+    });
+    expect(exceedRes.status).toBe(429);
+    const exceedBody = await exceedRes.json();
+    expect(exceedBody.error.code).toBe("QUOTA_EXCEEDED");
+
+    // Cleanup fresh user
+    if (freshUserId) {
+      await db.delete(inviteRedemption).where(eq(inviteRedemption.accountId, freshUserId));
+      await db.delete(invite).where(eq(invite.referrerId, freshUserId));
+      await db.delete(subscription).where(eq(subscription.accountId, freshUserId));
+      await db.delete(session).where(eq(session.userId, freshUserId));
+      await db.delete(user).where(eq(user.id, freshUserId));
+    }
+  });
 });

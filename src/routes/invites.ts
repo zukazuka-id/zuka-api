@@ -58,6 +58,26 @@ inviteRoutes.post("/generate", requireAuth, zValidator("json", generateInvitesSc
     return error(c, "SUBSCRIPTION_REQUIRED", "Active subscription required to generate invites", 403);
   }
 
+  // Check daily quota before generating
+  const todayStart = getTodayStartWIB();
+
+  const [quotaConfigRow] = await db
+    .select({ value: platformConfig.value })
+    .from(platformConfig)
+    .where(eq(platformConfig.key, "daily_invite_limit"))
+    .limit(1);
+
+  const dailyLimit = quotaConfigRow ? parseInt(quotaConfigRow.value, 10) : 10;
+
+  const [{ todayCount }] = await db
+    .select({ todayCount: sql<number>`count(*)::int` })
+    .from(invite)
+    .where(and(eq(invite.referrerId, user.id), gte(invite.createdAt, todayStart)));
+
+  if (todayCount + count > dailyLimit) {
+    return error(c, "QUOTA_EXCEEDED", `Daily invite limit reached (${dailyLimit}/day)`, 429);
+  }
+
   const codes: { id: string; code: string }[] = [];
   await db.transaction(async (tx) => {
     for (let i = 0; i < count; i++) {
