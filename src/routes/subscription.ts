@@ -1,10 +1,11 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index.js";
-import { subscription, inviteRedemption } from "../db/schema.js";
+import { subscription } from "../db/schema.js";
 import { eq, and, desc } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth.js";
 import { success, error } from "../lib/response.js";
+import { consumeInvite } from "../lib/invite-service.js";
 import { createSubscriptionSchema } from "../validators/index.js";
 
 type UserVars = {
@@ -48,21 +49,7 @@ subscriptionRoutes.post("/create", zValidator("json", createSubscriptionSchema),
       .returning();
 
     // Auto-consume any claimed invite for this user
-    const [claimed] = await tx
-      .select()
-      .from(inviteRedemption)
-      .where(and(
-        eq(inviteRedemption.accountId, user.id),
-        eq(inviteRedemption.phase, "claimed"),
-      ))
-      .limit(1);
-
-    if (claimed) {
-      await tx
-        .update(inviteRedemption)
-        .set({ phase: "consumed", consumedAt: new Date() })
-        .where(eq(inviteRedemption.id, claimed.id));
-    }
+    await consumeInvite(tx, user.id);
 
     return created;
   });
