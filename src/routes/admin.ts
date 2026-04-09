@@ -3,7 +3,13 @@ import { zValidator } from "@hono/zod-validator";
 import { requireAdmin } from "../middleware/admin.js";
 import { db } from "../db/index.js";
 import { success, error } from "../lib/response.js";
-import { adminCreateInvitesSchema } from "../validators/index.js";
+import {
+  adminCreateInvitesSchema,
+  adminMembersQuerySchema,
+  adminRestaurantsQuerySchema,
+  adminRedemptionsQuerySchema,
+  adminInvitesQuerySchema,
+} from "../validators/index.js";
 import {
   user,
   session,
@@ -20,9 +26,9 @@ const adminRoutes = new Hono();
 
 // ─── A1: Members ────────────────────────────────────────────
 
-adminRoutes.get("/members", requireAdmin, async (c) => {
-  const { search, status, page = "1", limit = "20" } = c.req.query();
-  const offset = (parseInt(page) - 1) * parseInt(limit);
+adminRoutes.get("/members", requireAdmin, zValidator("query", adminMembersQuerySchema), async (c) => {
+  const { search, status, page, limit } = c.req.valid("query");
+  const offset = (page - 1) * limit;
 
   const conditions = [];
   if (search) {
@@ -48,12 +54,12 @@ adminRoutes.get("/members", requireAdmin, async (c) => {
       .from(user)
       .where(where)
       .orderBy(desc(user.createdAt))
-      .limit(parseInt(limit))
+      .limit(limit)
       .offset(offset),
     db.select({ count: count() }).from(user).where(where),
   ]);
 
-  return success(c, { members, total: totalResult[0]?.count ?? 0, page: parseInt(page), limit: parseInt(limit) });
+  return success(c, { members, total: totalResult[0]?.count ?? 0, page, limit });
 });
 
 adminRoutes.get("/members/:id", requireAdmin, async (c) => {
@@ -94,9 +100,9 @@ adminRoutes.get("/members/:id", requireAdmin, async (c) => {
 
 // ─── A2: Restaurants ────────────────────────────────────────
 
-adminRoutes.get("/restaurants", requireAdmin, async (c) => {
-  const { search, status, cuisine, page = "1", limit = "20" } = c.req.query();
-  const offset = (parseInt(page) - 1) * parseInt(limit);
+adminRoutes.get("/restaurants", requireAdmin, zValidator("query", adminRestaurantsQuerySchema), async (c) => {
+  const { search, status, cuisine, page, limit } = c.req.valid("query");
+  const offset = (page - 1) * limit;
 
   const conditions = [];
   if (search) {
@@ -124,12 +130,12 @@ adminRoutes.get("/restaurants", requireAdmin, async (c) => {
       .where(where)
       .groupBy(restaurant.id)
       .orderBy(desc(restaurant.createdAt))
-      .limit(parseInt(limit))
+      .limit(limit)
       .offset(offset),
     db.select({ count: count() }).from(restaurant).where(where),
   ]);
 
-  return success(c, { restaurants, total: totalResult[0]?.count ?? 0, page: parseInt(page), limit: parseInt(limit) });
+  return success(c, { restaurants, total: totalResult[0]?.count ?? 0, page, limit });
 });
 
 adminRoutes.get("/restaurants/:id", requireAdmin, async (c) => {
@@ -145,9 +151,9 @@ adminRoutes.get("/restaurants/:id", requireAdmin, async (c) => {
 
 // ─── A3: Redemptions ────────────────────────────────────────
 
-adminRoutes.get("/redemptions", requireAdmin, async (c) => {
-  const { memberId, outletId, status, startDate, endDate, page = "1", limit = "50" } = c.req.query();
-  const offset = (parseInt(page) - 1) * parseInt(limit);
+adminRoutes.get("/redemptions", requireAdmin, zValidator("query", adminRedemptionsQuerySchema), async (c) => {
+  const { memberId, outletId, status, startDate, endDate, page, limit } = c.req.valid("query");
+  const offset = (page - 1) * limit;
 
   const conditions = [];
   if (memberId) conditions.push(eq(redemption.accountId, memberId));
@@ -170,19 +176,19 @@ adminRoutes.get("/redemptions", requireAdmin, async (c) => {
       .from(redemption)
       .where(where)
       .orderBy(desc(redemption.createdAt))
-      .limit(parseInt(limit))
+      .limit(limit)
       .offset(offset),
     db.select({ count: count() }).from(redemption).where(where),
   ]);
 
-  return success(c, { redemptions, total: totalResult[0]?.count ?? 0, page: parseInt(page), limit: parseInt(limit) });
+  return success(c, { redemptions, total: totalResult[0]?.count ?? 0, page, limit });
 });
 
 // ─── A4: Invite Codes ────────────────────────────────────────
 
-adminRoutes.get("/invites", requireAdmin, async (c) => {
-  const { status, referrerId, page = "1", limit = "50" } = c.req.query();
-  const offset = (parseInt(page) - 1) * parseInt(limit);
+adminRoutes.get("/invites", requireAdmin, zValidator("query", adminInvitesQuerySchema), async (c) => {
+  const { status, referrerId, page, limit } = c.req.valid("query");
+  const offset = (page - 1) * limit;
 
   const conditions = [];
   if (status) conditions.push(eq(invite.status, status));
@@ -205,12 +211,12 @@ adminRoutes.get("/invites", requireAdmin, async (c) => {
       .from(invite)
       .where(where)
       .orderBy(desc(invite.createdAt))
-      .limit(parseInt(limit))
+      .limit(limit)
       .offset(offset),
     db.select({ count: count() }).from(invite).where(where),
   ]);
 
-  return success(c, { invites, total: totalResult[0]?.count ?? 0, page: parseInt(page), limit: parseInt(limit) });
+  return success(c, { invites, total: totalResult[0]?.count ?? 0, page, limit });
 });
 
 adminRoutes.post("/invites/create", requireAdmin, zValidator("json", adminCreateInvitesSchema), async (c) => {

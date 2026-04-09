@@ -62,7 +62,35 @@ export const updateOutletSchema = z.object({
   status: outletStatusEnum.optional(),
 });
 
-// Admin
+// Admin list query params
+export const listQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  search: z.string().max(200).optional(),
+});
+
+export const adminMembersQuerySchema = listQuerySchema.extend({
+  status: z.enum(["verified", "unverified"]).optional(),
+});
+
+export const adminRestaurantsQuerySchema = listQuerySchema.extend({
+  status: z.enum(["active", "pending", "suspended"]).optional(),
+  cuisine: z.string().optional(),
+});
+
+export const adminRedemptionsQuerySchema = listQuerySchema.extend({
+  memberId: z.string().min(1).optional(),
+  outletId: z.string().min(1).optional(),
+  status: z.enum(["pending", "confirmed", "cancelled"]).optional(),
+  startDate: z.string().datetime({ offset: true }).optional(),
+  endDate: z.string().datetime({ offset: true }).optional(),
+});
+
+export const adminInvitesQuerySchema = listQuerySchema.extend({
+  status: z.enum(["active", "inactive"]).optional(),
+  referrerId: z.string().min(1).optional(),
+});
+
 export const adminCreateInvitesSchema = z.object({
   referrerId: z.string().min(1),
   count: z.number().int().min(1).max(100).default(1),
