@@ -201,7 +201,9 @@ export const invite = pgTable("invite", {
   status: text("status").default("active").notNull(),  // active | inactive
   expiresAt: timestamp("expires_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  referrerIdx: index("idx_invite_referrer").on(t.referrerId),
+}));
 
 export const inviteRedemption = pgTable(
   "invite_redemption",
@@ -225,8 +227,18 @@ export const inviteRedemption = pgTable(
       t.inviteId,
       t.accountId
     ),
+    invitePhaseIdx: index("idx_ir_invite_phase").on(t.inviteId, t.phase),
   })
 );
+
+// Platform configuration key-value store
+export const platformConfig = pgTable("platform_config", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  isPublic: boolean("is_public").notNull().default(false),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  updatedBy: text("updated_by").references(() => user.id, { onDelete: "set null" }),
+});
 
 // NOTE: Notification table is reserved for future push notification features.
 // Not currently used by any route handlers.
