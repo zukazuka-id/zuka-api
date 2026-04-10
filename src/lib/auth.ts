@@ -29,6 +29,10 @@ export const devOtpStore = new Map<string, string>();
 const isDevOrTest = process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
 
 export const auth = betterAuth({
+  trustedOrigins: [
+    process.env.BETTER_AUTH_URL || "http://localhost:3456",
+    ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",") : []),
+  ],
   database: drizzleAdapter(db, {
     provider: "pg",
     schema: {
