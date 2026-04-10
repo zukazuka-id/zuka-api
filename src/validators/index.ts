@@ -5,6 +5,11 @@ export const registerSchema = z.object({
   phoneNumber: z.string().min(8).max(15),
 });
 
+export const registerDeviceSchema = z.object({
+  token: z.string().min(10).max(500),
+  platform: z.enum(["ios", "android", "web"]),
+});
+
 export const verifyOtpSchema = z.object({
   phoneNumber: z.string().min(8).max(15),
   code: z.string().length(6),
@@ -97,6 +102,17 @@ export const adminCreateInvitesSchema = z.object({
   expiresDays: z.number().int().min(1).max(365).default(30),
   type: z.enum(["single_use", "multi_use"]).default("single_use"),
   maxRedemptions: z.number().int().min(1).nullable().default(null),
+});
+
+// Platform Config
+export const configQuerySchema = z.object({
+  key: z.string().min(1).max(100),
+});
+
+export const adminConfigUpsertSchema = z.object({
+  key: z.string().min(1).max(100),
+  value: z.string().min(1).max(1000),
+  isPublic: z.boolean().optional(),
 });
 
 export const updateRestaurantSchema = z.object({

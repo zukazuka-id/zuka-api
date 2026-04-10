@@ -14,6 +14,8 @@ import { subscriptionRoutes } from "./routes/subscription.js";
 import { inviteRoutes } from "./routes/invites.js";
 import { outletRoutes } from "./routes/outlets.js";
 import { adminRoutes } from "./routes/admin.js";
+import { configRoutes } from "./routes/config.js";
+import { deviceRoutes } from "./routes/devices.js";
 import { docsApp } from "./openapi-routes.js";
 
 // ── OpenAPI Spec Generation ───────────────────────────────────
@@ -97,6 +99,7 @@ app.use("/api/v1/auth/*", authRateLimiter);
 app.use("/api/v1/invites/redeem", strictRateLimiter);
 app.use("/api/v1/redemptions/verify", strictRateLimiter);
 app.use("/api/v1/subscription/create", moderateRateLimiter);
+app.use("/api/v1/devices/register", strictRateLimiter);
 
 // API v1 routes
 app.route("/api/v1/auth", authRoutes);
@@ -107,5 +110,7 @@ app.route("/api/v1/subscription", subscriptionRoutes);
 app.route("/api/v1/invites", inviteRoutes);
 app.route("/api/v1/outlets", outletRoutes);
 app.route("/api/v1/admin", adminRoutes);
+app.route("/api/v1/config", configRoutes);
+app.route("/api/v1/devices", deviceRoutes);
 
 export type AppType = typeof app;
