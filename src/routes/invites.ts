@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index.js";
-import { invite, inviteRedemption, platformConfig, subscription } from "../db/schema.js";
+import { user, invite, inviteRedemption, platformConfig, subscription } from "../db/schema.js";
 import { eq, and, gte, desc, sql } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth.js";
 import { success, error } from "../lib/response.js";
@@ -96,6 +96,32 @@ inviteRoutes.post("/generate", requireAuth, zValidator("json", generateInvitesSc
   });
 
   return success(c, codes, 201);
+});
+
+// GET /invites/:code/preview — public, read-only preview for deep links
+inviteRoutes.get("/:code/preview", async (c) => {
+  const code = c.req.param("code").toUpperCase();
+  const result = await validateInvite(code);
+
+  if (!result.valid) {
+    return success(c, {
+      valid: false,
+      reason: result.code,
+    });
+  }
+
+  const [referrer] = await db
+    .select({ name: user.name })
+    .from(user)
+    .where(eq(user.id, result.invite.referrerId))
+    .limit(1);
+
+  return success(c, {
+    valid: true,
+    code: result.invite.code,
+    type: result.invite.type,
+    referrerName: referrer?.name ?? null,
+  });
 });
 
 // POST /invites/redeem — public, validation only (no DB writes)

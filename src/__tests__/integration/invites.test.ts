@@ -341,4 +341,54 @@ describe("Invites Integration Tests", () => {
       await db.delete(user).where(eq(user.id, freshUserId));
     }
   });
+
+  it("GET /invites/:code/preview — valid code returns preview with referrer name", async () => {
+    await setupUserWithSubscription();
+    const gen = await app.request("/api/v1/invites/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}` },
+      body: JSON.stringify({ count: 1 }),
+    });
+    const genBody = await gen.json();
+    const code = genBody.data[0].code;
+
+    const res = await app.request(`/api/v1/invites/${code}/preview`);
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.data.valid).toBe(true);
+    expect(body.data.code).toBe(code);
+    expect(body.data.type).toBe("single_use");
+    expect(body.data.referrerName).toBeTruthy();
+  });
+
+  it("GET /invites/:code/preview — non-existent code returns valid:false", async () => {
+    const res = await app.request("/api/v1/invites/NOTEXISTS/preview");
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.data.valid).toBe(false);
+    expect(body.data.reason).toBe("NOT_FOUND");
+  });
+
+  it("GET /invites/:code/preview — expired code returns valid:false with EXPIRED", async () => {
+    const code = generateInviteCode();
+    await db.insert(invite).values({
+      code,
+      referrerId: userId,
+      type: "single_use",
+      status: "active",
+      expiresAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    });
+
+    const res = await app.request(`/api/v1/invites/${code}/preview`);
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.data.valid).toBe(false);
+    expect(body.data.reason).toBe("EXPIRED");
+  });
+
+  it("GET /invites/:code/preview — works without authentication (public)", async () => {
+    const res = await app.request("/api/v1/invites/ANYCODE/preview");
+    expect(res.status).toBe(200);
+  });
 });

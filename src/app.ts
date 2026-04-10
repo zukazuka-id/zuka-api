@@ -97,9 +97,11 @@ app.use("/api/v1/auth/*", authRateLimiter);
 
 // Rate limiting on sensitive write endpoints
 app.use("/api/v1/invites/redeem", strictRateLimiter);
+app.use("/api/v1/invites/:code/preview", moderateRateLimiter);
 app.use("/api/v1/redemptions/verify", strictRateLimiter);
 app.use("/api/v1/subscription/create", moderateRateLimiter);
 app.use("/api/v1/devices/register", strictRateLimiter);
+app.use("/api/v1/restaurants/nearby", moderateRateLimiter);
 
 // API v1 routes
 app.route("/api/v1/auth", authRoutes);
