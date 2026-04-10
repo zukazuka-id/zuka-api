@@ -256,6 +256,21 @@ export const notification = pgTable("notification", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const device = pgTable("device", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  accountId: text("account_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  token: text("token").notNull().unique(),
+  platform: text("platform").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => ({
+  deviceAccountIdx: index("device_account_idx").on(t.accountId),
+}));
+
 // ========================================
 // Relations
 // ========================================
@@ -269,6 +284,7 @@ export const userRelations = relations(user, ({ many }) => ({
   sentInvites: many(invite, { relationName: "referrer" }),
   receivedInvites: many(inviteRedemption),
   notifications: many(notification),
+  devices: many(device),
 }));
 
 export const sessionRelations = relations(session, ({ one }) => ({
@@ -358,6 +374,13 @@ export const inviteRedemptionRelations = relations(inviteRedemption, ({ one }) =
 export const notificationRelations = relations(notification, ({ one }) => ({
   account: one(user, {
     fields: [notification.accountId],
+    references: [user.id],
+  }),
+}));
+
+export const deviceRelations = relations(device, ({ one }) => ({
+  account: one(user, {
+    fields: [device.accountId],
     references: [user.id],
   }),
 }));
