@@ -5,7 +5,9 @@ import {
   outlet,
   restaurantPhoto,
 } from "../db/schema.js";
-import { eq, ilike, or, and, inArray, sql } from "drizzle-orm";
+import { eq, ilike, or, and, inArray, sql, isNotNull, gt, lt } from "drizzle-orm";
+import { zValidator } from "@hono/zod-validator";
+import { nearbyQuerySchema } from "../validators/index.js";
 import { success, paginated, error } from "../lib/response.js";
 
 const restaurantRoutes = new Hono();
@@ -123,6 +125,105 @@ restaurantRoutes.get("/search", async (c) => {
     .limit(20);
 
   return success(c, results);
+});
+
+// GET /restaurants/nearby — public, geolocation-based discovery
+restaurantRoutes.get("/nearby", zValidator("query", nearbyQuerySchema), async (c) => {
+  const { lat, lng, radius } = c.req.valid("query");
+
+  // Bounding box prefilter
+  const latRad = (lat * Math.PI) / 180;
+  const kmPerDegLat = 111.045;
+  const kmPerDegLng = 111.045 * Math.cos(latRad);
+  const latMin = lat - radius / kmPerDegLat;
+  const latMax = lat + radius / kmPerDegLat;
+  const lngMin = lng - radius / kmPerDegLng;
+  const lngMax = lng + radius / kmPerDegLng;
+
+  const candidates = await db
+    .select({
+      restaurantId: restaurant.id,
+      restaurantName: restaurant.name,
+      restaurantDescription: restaurant.description,
+      restaurantLogo: restaurant.logo,
+      cuisineTags: restaurant.cuisineTags,
+      halalCertified: restaurant.halalCertified,
+      outletId: outlet.id,
+      outletLabel: outlet.label,
+      outletAddress: outlet.address,
+      outletIsOpen: outlet.isOpen,
+      outletBogoLimit: outlet.bogoLimit,
+      distanceKm: sql<number>`
+        6371 * acos(
+          least(1.0,
+            cos(radians(${lat})) * cos(radians(${outlet.lat}))
+              * cos(radians(${outlet.lng}) - radians(${lng}))
+            + sin(radians(${lat})) * sin(radians(${outlet.lat}))
+          )
+        )
+      `.as("distance_km"),
+    })
+    .from(outlet)
+    .innerJoin(restaurant, eq(outlet.restaurantId, restaurant.id))
+    .where(
+      and(
+        gt(outlet.lat, latMin),
+        lt(outlet.lat, latMax),
+        gt(outlet.lng, lngMin),
+        lt(outlet.lng, lngMax),
+        eq(outlet.isOpen, true),
+        eq(outlet.status, "active"),
+        isNotNull(outlet.lat),
+        isNotNull(outlet.lng),
+      )
+    );
+
+  const withinRadius = candidates.filter((r) => r.distanceKm <= radius);
+
+  const nearestByRestaurant = new Map<string, {
+    id: string;
+    name: string;
+    description: string | null;
+    logo: string | null;
+    cuisineTags: string[] | null;
+    halalCertified: boolean | null;
+    nearestOutlet: {
+      id: string;
+      label: string;
+      address: string;
+      distanceKm: number;
+      isOpen: boolean | null;
+      bogoLimit: number | null;
+    };
+  }>();
+
+  for (const row of withinRadius) {
+    const existing = nearestByRestaurant.get(row.restaurantId);
+    if (!existing || row.distanceKm < existing.nearestOutlet.distanceKm) {
+      nearestByRestaurant.set(row.restaurantId, {
+        id: row.restaurantId,
+        name: row.restaurantName,
+        description: row.restaurantDescription,
+        logo: row.restaurantLogo,
+        cuisineTags: row.cuisineTags,
+        halalCertified: row.halalCertified,
+        nearestOutlet: {
+          id: row.outletId,
+          label: row.outletLabel,
+          address: row.outletAddress,
+          distanceKm: Math.round(row.distanceKm * 10) / 10,
+          isOpen: row.outletIsOpen,
+          bogoLimit: row.outletBogoLimit,
+        },
+      });
+    }
+  }
+
+  const restaurants = Array.from(nearestByRestaurant.values())
+    .sort((a, b) => a.nearestOutlet.distanceKm - b.nearestOutlet.distanceKm)
+    .slice(0, 20);
+
+  return success(c, { restaurants });
 });
 
 // GET /restaurants/:id — full detail with outlets + photos

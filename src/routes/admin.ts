@@ -9,6 +9,7 @@ import {
   adminRestaurantsQuerySchema,
   adminRedemptionsQuerySchema,
   adminInvitesQuerySchema,
+  adminConfigUpsertSchema,
 } from "../validators/index.js";
 import {
   user,
@@ -19,6 +20,7 @@ import {
   outlet,
   restaurant,
   accountRole,
+  platformConfig,
 } from "../db/schema.js";
 import { eq, sql, and, desc, ilike, like, gte, lte, count } from "drizzle-orm";
 
@@ -292,6 +294,50 @@ adminRoutes.get("/dashboard", requireAdmin, async (c) => {
     totalInvites: totalInvites?.count ?? 0,
     recentSignups: recentSignups?.count ?? 0,
   });
+});
+
+// ─── A6: Platform Config ──────────────────────────────────────
+
+adminRoutes.get("/config", requireAdmin, async (c) => {
+  const rows = await db.select().from(platformConfig).orderBy(platformConfig.key);
+  return success(c, rows);
+});
+
+adminRoutes.put(
+  "/config",
+  requireAdmin,
+  zValidator("json", adminConfigUpsertSchema),
+  async (c) => {
+    const { key, value, isPublic } = c.req.valid("json");
+    const admin = c.get("admin") as { id: string; [key: string]: unknown };
+    await db
+      .insert(platformConfig)
+      .values({ key, value, isPublic: isPublic ?? false, updatedBy: admin.id })
+      .onConflictDoUpdate({
+        target: platformConfig.key,
+        set: {
+          value,
+          ...(isPublic !== undefined ? { isPublic } : {}),
+          updatedAt: new Date(),
+          updatedBy: admin.id,
+        },
+      });
+    return success(c, { key, value, isPublic });
+  },
+);
+
+adminRoutes.delete("/config/:key", requireAdmin, async (c) => {
+  const key = c.req.param("key");
+  const [existing] = await db
+    .select()
+    .from(platformConfig)
+    .where(eq(platformConfig.key, key))
+    .limit(1);
+  if (!existing) {
+    return error(c, "NOT_FOUND", "Config key not found", 404);
+  }
+  await db.delete(platformConfig).where(eq(platformConfig.key, key));
+  return success(c, { deleted: true });
 });
 
 export { adminRoutes };

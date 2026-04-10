@@ -67,6 +67,13 @@ export const updateOutletSchema = z.object({
   status: outletStatusEnum.optional(),
 });
 
+// Nearby restaurants query
+export const nearbyQuerySchema = z.object({
+  lat: z.coerce.number().min(-90).max(90),
+  lng: z.coerce.number().min(-180).max(180),
+  radius: z.coerce.number().min(0.1).max(50).default(10),
+});
+
 // Admin list query params
 export const listQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
