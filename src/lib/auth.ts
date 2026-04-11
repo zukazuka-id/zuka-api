@@ -33,6 +33,14 @@ export const auth = betterAuth({
     process.env.BETTER_AUTH_URL || "http://localhost:3456",
     ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",") : []),
   ],
+  advanced: {
+    useSecureCookies: !isDevOrTest,
+    defaultCookieAttributes: {
+      sameSite: isDevOrTest ? "lax" : "none",
+      secure: !isDevOrTest,
+      partitioned: !isDevOrTest,
+    },
+  },
   database: drizzleAdapter(db, {
     provider: "pg",
     schema: {
