@@ -50,9 +50,16 @@ export const app = new Hono<{ Variables: UserVars }>();
 app.use("*", logger());
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",")
-  : ["http://localhost:3000", "http://localhost:3001", "http://localhost:7490", "http://localhost:7491"];
+  : ["http://localhost:3000", "http://localhost:3001", "http://localhost:7490", "http://localhost:7491", "http://localhost:7492"];
 
-app.use("*", cors({ origin: ALLOWED_ORIGINS, credentials: true }));
+app.use("*", cors({
+  origin: ALLOWED_ORIGINS,
+  credentials: true,
+  allowMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowHeaders: ["Content-Type", "Authorization"],
+  exposeHeaders: ["Set-Cookie"],
+  maxAge: 86400,
+}));
 
 // Global error handler
 app.onError(errorHandler);
