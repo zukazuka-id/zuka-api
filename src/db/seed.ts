@@ -2,6 +2,7 @@ import "dotenv/config";
 import { db } from "./index.js";
 import {
   user,
+  authCredential,
   restaurant,
   outlet,
   accountRole,
@@ -12,6 +13,7 @@ import {
   notification,
 } from "./schema.js";
 import { eq } from "drizzle-orm";
+import { hashPassword } from "better-auth/crypto";
 
 async function seed() {
   console.log("Seeding database...");
@@ -33,6 +35,8 @@ async function seed() {
   }
   console.log("Cleared existing data.");
 
+  const seedPasswordHash = await hashPassword("asdf1234!");
+
   // --- Accounts (users) ---
   const [owner] = await db
     .insert(user)
@@ -43,6 +47,37 @@ async function seed() {
       { id: "seed-member-1", name: "Andi Wijaya", email: "andi@gmail.com", emailVerified: true, phoneNumber: "+6281234567892", phoneNumberVerified: true },
     ])
     .returning();
+
+  await db.insert(authCredential).values([
+    {
+      id: crypto.randomUUID(),
+      userId: "seed-owner-1",
+      accountId: crypto.randomUUID(),
+      providerId: "credential",
+      password: seedPasswordHash,
+    },
+    {
+      id: crypto.randomUUID(),
+      userId: "seed-manager-1",
+      accountId: crypto.randomUUID(),
+      providerId: "credential",
+      password: seedPasswordHash,
+    },
+    {
+      id: crypto.randomUUID(),
+      userId: "seed-staff-1",
+      accountId: crypto.randomUUID(),
+      providerId: "credential",
+      password: seedPasswordHash,
+    },
+    {
+      id: crypto.randomUUID(),
+      userId: "seed-member-1",
+      accountId: crypto.randomUUID(),
+      providerId: "credential",
+      password: seedPasswordHash,
+    },
+  ]);
 
   // --- Restaurants ---
   const [warungPadang] = await db

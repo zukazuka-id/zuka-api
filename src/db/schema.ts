@@ -8,8 +8,9 @@ import {
   doublePrecision,
   uniqueIndex,
   index,
+  check,
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 
 // ========================================
 // Better Auth Core Tables
@@ -89,8 +90,23 @@ export const restaurant = pgTable("restaurant", {
   cuisineTags: text("cuisine_tags").array(),
   halalCertified: boolean("halal_certified").default(false),
   logo: text("logo"),
+  status: text("status").default("pending").notNull(),
+  operatingHours: jsonb("operating_hours"),
+  defaultBogoLimit: integer("default_bogo_limit").default(1).notNull(),
+  defaultAvgTableSpend: integer("default_avg_table_spend"),
+  whatsappNumber: text("whatsapp_number"),
+  phoneNumber: text("phone_number"),
+  instagramHandle: text("instagram_handle"),
+  tiktokHandle: text("tiktok_handle"),
+  facebookUrl: text("facebook_url"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => ({
+  restaurantStatusCheck: check(
+    "restaurant_status_check",
+    sql`${t.status} in ('pending', 'active', 'suspended', 'archived')`
+  ),
+}));
 
 export const outlet = pgTable("outlet", {
   id: text("id")
@@ -110,10 +126,25 @@ export const outlet = pgTable("outlet", {
   whatsappNumber: text("whatsapp_number"),
   phoneContact: text("phone_contact"),
   instagramHandle: text("instagram_handle"),
-  status: text("status").default("pending").notNull(), // active | pending | suspended
+  status: text("status").default("pending").notNull(),
+  isManuallyClosed: boolean("is_manually_closed").default(false).notNull(),
+  manualCloseReopenStrategy: text("manual_close_reopen_strategy")
+    .default("indefinite")
+    .notNull(),
+  manualCloseReopenAt: timestamp("manual_close_reopen_at"),
   joinedDate: timestamp("joined_date").defaultNow(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => ({
+  outletStatusCheck: check(
+    "outlet_status_check",
+    sql`${t.status} in ('pending', 'active', 'suspended', 'archived')`
+  ),
+  manualCloseReopenStrategyCheck: check(
+    "outlet_manual_close_reopen_strategy_check",
+    sql`${t.manualCloseReopenStrategy} in ('next_hours', 'custom', 'indefinite')`
+  ),
+}));
 
 export const accountRole = pgTable(
   "account_role",
@@ -143,13 +174,30 @@ export const restaurantPhoto = pgTable("restaurant_photo", {
   id: text("id")
     .primaryKey()
     .$defaultFn(() => crypto.randomUUID()),
-  outletId: text("outlet_id")
-    .notNull()
-    .references(() => outlet.id, { onDelete: "cascade" }),
+  restaurantId: text("restaurant_id").references(() => restaurant.id, {
+    onDelete: "cascade",
+  }),
+  outletId: text("outlet_id").references(() => outlet.id, { onDelete: "cascade" }),
   url: text("url").notNull(),
   label: text("label"),
+  imagekitFileId: text("imagekit_file_id"),
+  imagekitUrl: text("imagekit_url"),
+  sortOrder: integer("sort_order").default(0).notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  restaurantPhotoRestaurantIdx: index("restaurant_photo_restaurant_idx").on(
+    t.restaurantId
+  ),
+  restaurantPhotoOutletSortIdx: index("restaurant_photo_outlet_sort_idx").on(
+    t.outletId,
+    t.sortOrder
+  ),
+  restaurantPhotoParentCheck: check(
+    "restaurant_photo_parent_check",
+    sql`(("restaurant_id" is not null) <> ("outlet_id" is not null))`
+  ),
+}));
 
 export const subscription = pgTable("subscription", {
   id: text("id")
@@ -303,6 +351,7 @@ export const authCredentialRelations = relations(authCredential, ({ one }) => ({
 
 export const restaurantRelations = relations(restaurant, ({ many }) => ({
   outlets: many(outlet),
+  photos: many(restaurantPhoto),
 }));
 
 export const outletRelations = relations(outlet, ({ one, many }) => ({
@@ -327,6 +376,10 @@ export const accountRoleRelations = relations(accountRole, ({ one }) => ({
 }));
 
 export const restaurantPhotoRelations = relations(restaurantPhoto, ({ one }) => ({
+  restaurant: one(restaurant, {
+    fields: [restaurantPhoto.restaurantId],
+    references: [restaurant.id],
+  }),
   outlet: one(outlet, {
     fields: [restaurantPhoto.outletId],
     references: [outlet.id],
