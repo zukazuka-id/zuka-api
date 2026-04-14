@@ -19,7 +19,7 @@ restaurantRoutes.get("/discover", async (c) => {
   const limit = Math.min(parseInt(c.req.query("limit") || "20"), 50);
   const offset = (page - 1) * limit;
 
-  const conditions = [eq(outlet.isOpen, true), eq(outlet.status, "active")];
+  const conditions = [eq(restaurant.status, "active"), eq(outlet.status, "active")];
   if (cuisine) {
     conditions.push(sql`${restaurant.cuisineTags} @> ARRAY[${cuisine}]`);
   }
@@ -116,10 +116,13 @@ restaurantRoutes.get("/search", async (c) => {
     })
     .from(restaurant)
     .where(
-      or(
-        ilike(restaurant.name, `%${q}%`),
-        sql`${restaurant.cuisineTags}::text ILIKE ${"%" + q + "%"}`,
-        ilike(restaurant.description, `%${q}%`)
+      and(
+        eq(restaurant.status, "active"),
+        or(
+          ilike(restaurant.name, `%${q}%`),
+          sql`${restaurant.cuisineTags}::text ILIKE ${"%" + q + "%"}`,
+          ilike(restaurant.description, `%${q}%`)
+        )
       )
     )
     .limit(20);
@@ -171,7 +174,7 @@ restaurantRoutes.get("/nearby", zValidator("query", nearbyQuerySchema), async (c
         lt(outlet.lat, latMax),
         gt(outlet.lng, lngMin),
         lt(outlet.lng, lngMax),
-        eq(outlet.isOpen, true),
+        eq(restaurant.status, "active"),
         eq(outlet.status, "active"),
         isNotNull(outlet.lat),
         isNotNull(outlet.lng),
@@ -233,7 +236,7 @@ restaurantRoutes.get("/:id", async (c) => {
   const [rest] = await db
     .select()
     .from(restaurant)
-    .where(eq(restaurant.id, id))
+    .where(and(eq(restaurant.id, id), eq(restaurant.status, "active")))
     .limit(1);
 
   if (!rest) {
@@ -243,7 +246,7 @@ restaurantRoutes.get("/:id", async (c) => {
   const outlets = await db
     .select()
     .from(outlet)
-    .where(eq(outlet.restaurantId, id));
+    .where(and(eq(outlet.restaurantId, id), eq(outlet.status, "active")));
 
   // Attach photos to their respective outlets
   const outletIds = outlets.map((o) => o.id);
