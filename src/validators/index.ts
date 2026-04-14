@@ -85,9 +85,24 @@ export const adminMembersQuerySchema = listQuerySchema.extend({
   status: z.enum(["verified", "unverified"]).optional(),
 });
 
+const queryBoolean = z.preprocess((value) => {
+  if (value === "true" || value === true) return true;
+  if (value === "false" || value === false) return false;
+  return value;
+}, z.boolean());
+
+const restaurantStatusEnum = z.enum(["pending", "active", "suspended", "archived"]);
+
 export const adminRestaurantsQuerySchema = listQuerySchema.extend({
-  status: z.enum(["active", "pending", "suspended"]).optional(),
+  restaurantStatus: restaurantStatusEnum.optional(),
+  outletStatus: restaurantStatusEnum.optional(),
+  isOpen: queryBoolean.optional(),
   cuisine: z.string().optional(),
+  halal: queryBoolean.optional(),
+  includeArchived: queryBoolean.optional(),
+  // Backward compatibility aliases
+  status: restaurantStatusEnum.optional(),
+  halalCertified: queryBoolean.optional(),
 });
 
 export const adminRedemptionsQuerySchema = listQuerySchema.extend({
@@ -123,9 +138,82 @@ export const adminConfigUpsertSchema = z.object({
 });
 
 export const updateRestaurantSchema = z.object({
-  name: z.string().min(1).max(200).optional(),
+  name: z.string().min(3).max(100).optional(),
   description: z.string().max(2000).optional(),
-  cuisineTags: z.array(z.string()).optional(),
+  cuisineTags: z.array(z.string().min(1).max(50)).max(10).optional(),
   halalCertified: z.boolean().optional(),
+  defaultBogoLimit: z.number().int().min(1).max(99).optional(),
   logo: z.string().optional(),
+});
+
+const adminRestaurantPhotoSchema = z.object({
+  url: z.string().url(),
+  label: z.string().max(200).optional(),
+  imagekitFileId: z.string().max(200).optional(),
+  imagekitUrl: z.string().url().optional(),
+  sortOrder: z.number().int().min(0).optional(),
+});
+
+const adminRestaurantFieldsSchema = z.object({
+  name: z.string().min(3).max(100),
+  description: z.string().max(2000).optional(),
+  cuisineTags: z.array(z.string().min(1).max(50)).max(10).optional(),
+  halalCertified: z.boolean().optional(),
+  operatingHours: z.record(z.string(), z.unknown()).optional(),
+  whatsappNumber: z.string().max(50).optional(),
+  phoneNumber: z.string().max(50).optional(),
+  instagramHandle: z.string().max(100).optional(),
+  tiktokHandle: z.string().max(100).optional(),
+  facebookUrl: z.string().url().optional(),
+  defaultBogoLimit: z.number().int().min(1).max(99).optional(),
+  defaultAvgTableSpend: z.number().int().positive().optional(),
+  photos: z.array(adminRestaurantPhotoSchema).max(10).optional(),
+});
+
+export const adminCreateRestaurantSchema = adminRestaurantFieldsSchema.extend({
+  status: z.literal("pending").optional(),
+});
+
+export const adminUpdateRestaurantSchema = adminRestaurantFieldsSchema.partial().extend({
+  name: z.string().min(3).max(100).optional(),
+});
+
+const adminOutletPhotoSchema = adminRestaurantPhotoSchema;
+
+const adminOutletFieldsSchema = z.object({
+  label: z.string().min(1).max(200),
+  address: z.string().min(1).max(500),
+  lat: z.number().min(-90).max(90).optional(),
+  lng: z.number().min(-180).max(180).optional(),
+  operatingHours: z.record(z.string(), z.unknown()).optional(),
+  isOpen: z.boolean().optional(),
+  bogoLimit: z.number().int().min(1).max(99).optional(),
+  avgTableSpend: z.number().int().positive().optional(),
+  whatsappNumber: z.string().max(50).optional(),
+  phoneContact: z.string().max(50).optional(),
+  instagramHandle: z.string().max(100).optional(),
+  status: restaurantStatusEnum.optional(),
+  photos: z.array(adminOutletPhotoSchema).max(10).optional(),
+});
+
+export const adminCreateOutletSchema = adminOutletFieldsSchema.extend({
+  status: restaurantStatusEnum.optional(),
+});
+
+export const adminUpdateOutletSchema = adminOutletFieldsSchema.partial().extend({
+  label: z.string().min(1).max(200).optional(),
+  address: z.string().min(1).max(500).optional(),
+});
+
+export const adminManualCloseOutletSchema = z.object({
+  reopenStrategy: z.enum(["next_hours", "custom", "indefinite"]),
+  customReopenAt: z.string().datetime({ offset: true }).optional(),
+}).superRefine((value, ctx) => {
+  if (value.reopenStrategy === "custom" && !value.customReopenAt) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "customReopenAt is required when reopenStrategy is custom",
+      path: ["customReopenAt"],
+    });
+  }
 });

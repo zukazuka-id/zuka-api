@@ -3,13 +3,25 @@ import { zValidator } from "@hono/zod-validator";
 import { requireAdmin } from "../middleware/admin.js";
 import { db } from "../db/index.js";
 import { success, error } from "../lib/response.js";
+import { getImageKitUploadAuth } from "../lib/imagekit.js";
+import { computeOutletIsOpen, getNextOpenTime, shouldClearManualClose } from "../lib/outlet-availability.js";
+import {
+  replaceOutletPhotos,
+  replaceRestaurantPhotos,
+  withRestaurantPhotoTransaction,
+} from "../lib/restaurant-photos.js";
 import {
   adminCreateInvitesSchema,
+  adminCreateOutletSchema,
+  adminCreateRestaurantSchema,
+  adminManualCloseOutletSchema,
   adminMembersQuerySchema,
   adminRestaurantsQuerySchema,
   adminRedemptionsQuerySchema,
   adminInvitesQuerySchema,
   adminConfigUpsertSchema,
+  adminUpdateOutletSchema,
+  adminUpdateRestaurantSchema,
 } from "../validators/index.js";
 import {
   user,
@@ -19,14 +31,113 @@ import {
   invite,
   outlet,
   restaurant,
+  restaurantPhoto,
   accountRole,
   platformConfig,
 } from "../db/schema.js";
-import { eq, sql, and, desc, ilike, like, gte, lte, count } from "drizzle-orm";
+import { eq, sql, and, desc, ilike, like, gte, lte, count, isNull, asc } from "drizzle-orm";
 
 const adminRoutes = new Hono();
 
+type RestaurantLifecycleMutationResult =
+  | { kind: "not_found" }
+  | { kind: "archived_locked" }
+  | { kind: "ok"; restaurant: typeof restaurant.$inferSelect };
+
+async function updateRestaurantLifecycleStatus(
+  restaurantId: string,
+  nextStatus: "active" | "suspended" | "archived"
+) : Promise<RestaurantLifecycleMutationResult> {
+  return db.transaction(async (tx) => {
+    const [existingRestaurant] = await tx
+      .select({ id: restaurant.id, status: restaurant.status })
+      .from(restaurant)
+      .where(eq(restaurant.id, restaurantId))
+      .limit(1);
+
+    if (!existingRestaurant) {
+      return { kind: "not_found" };
+    }
+
+    if (existingRestaurant.status === "archived") {
+      return { kind: "archived_locked" };
+    }
+
+    const [updatedRestaurant] = await tx
+      .update(restaurant)
+      .set({ status: nextStatus })
+      .where(eq(restaurant.id, restaurantId))
+      .returning();
+
+    if (nextStatus === "active") {
+      const childOutlets = await tx
+        .select({
+          id: outlet.id,
+          status: outlet.status,
+          operatingHours: outlet.operatingHours,
+          isManuallyClosed: outlet.isManuallyClosed,
+          manualCloseReopenStrategy: outlet.manualCloseReopenStrategy,
+          manualCloseReopenAt: outlet.manualCloseReopenAt,
+        })
+        .from(outlet)
+        .where(eq(outlet.restaurantId, restaurantId));
+
+      for (const childOutlet of childOutlets) {
+        const availabilityInput = {
+          outlet: {
+            status: childOutlet.status,
+            operatingHours: (childOutlet.operatingHours as Record<string, unknown> | null | undefined) ?? null,
+            isManuallyClosed: childOutlet.isManuallyClosed,
+            manualCloseReopenStrategy: childOutlet.manualCloseReopenStrategy as "next_hours" | "custom" | "indefinite" | null,
+            manualCloseReopenAt: childOutlet.manualCloseReopenAt,
+          },
+          restaurant: {
+            status: nextStatus,
+          },
+          now: new Date(),
+        };
+
+        const updates: Record<string, unknown> = {
+          isOpen: computeOutletIsOpen(availabilityInput),
+        };
+
+        if (shouldClearManualClose(availabilityInput)) {
+          updates.isManuallyClosed = false;
+          updates.manualCloseReopenStrategy = "indefinite";
+          updates.manualCloseReopenAt = null;
+        }
+
+        await tx.update(outlet).set(updates).where(eq(outlet.id, childOutlet.id));
+      }
+    } else {
+      await tx
+        .update(outlet)
+        .set({ isOpen: false })
+        .where(eq(outlet.restaurantId, restaurantId));
+    }
+
+    if (!updatedRestaurant) {
+      return { kind: "not_found" };
+    }
+
+    return { kind: "ok", restaurant: updatedRestaurant };
+  });
+}
+
 // ─── A1: Members ────────────────────────────────────────────
+
+adminRoutes.get("/imagekit/upload-auth", requireAdmin, async (c) => {
+  try {
+    return success(c, getImageKitUploadAuth());
+  } catch (err) {
+    return error(
+      c,
+      "IMAGEKIT_CONFIG_MISSING",
+      err instanceof Error ? err.message : "ImageKit upload auth is not configured",
+      500
+    );
+  }
+});
 
 adminRoutes.get("/members", requireAdmin, zValidator("query", adminMembersQuerySchema), async (c) => {
   const { search, status, page, limit } = c.req.valid("query");
@@ -103,15 +214,43 @@ adminRoutes.get("/members/:id", requireAdmin, async (c) => {
 // ─── A2: Restaurants ────────────────────────────────────────
 
 adminRoutes.get("/restaurants", requireAdmin, zValidator("query", adminRestaurantsQuerySchema), async (c) => {
-  const { search, status, cuisine, page, limit } = c.req.valid("query");
+  const {
+    search,
+    restaurantStatus,
+    outletStatus,
+    isOpen,
+    cuisine,
+    halal,
+    includeArchived,
+    status,
+    halalCertified,
+    page,
+    limit,
+  } = c.req.valid("query");
   const offset = (page - 1) * limit;
+  const resolvedRestaurantStatus = restaurantStatus ?? status;
+  const resolvedHalal = halal ?? halalCertified;
 
   const conditions = [];
   if (search) {
     conditions.push(ilike(restaurant.name, `%${search}%`));
   }
-  if (status) {
-    conditions.push(eq(outlet.status, status));
+  if (resolvedRestaurantStatus) {
+    conditions.push(eq(restaurant.status, resolvedRestaurantStatus));
+  } else if (!includeArchived) {
+    conditions.push(sql`${restaurant.status} <> 'archived'`);
+  }
+  if (resolvedHalal !== undefined) {
+    conditions.push(eq(restaurant.halalCertified, resolvedHalal));
+  }
+  if (cuisine) {
+    conditions.push(sql`${restaurant.cuisineTags} @> ARRAY[${cuisine}]`);
+  }
+  if (outletStatus) {
+    conditions.push(eq(outlet.status, outletStatus));
+  }
+  if (isOpen !== undefined) {
+    conditions.push(eq(outlet.isOpen, isOpen));
   }
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
@@ -124,8 +263,22 @@ adminRoutes.get("/restaurants", requireAdmin, zValidator("query", adminRestauran
       cuisineTags: restaurant.cuisineTags,
       halalCertified: restaurant.halalCertified,
       logo: restaurant.logo,
+      status: restaurant.status,
+      operatingHours: restaurant.operatingHours,
+      defaultBogoLimit: restaurant.defaultBogoLimit,
+      defaultAvgTableSpend: restaurant.defaultAvgTableSpend,
+      whatsappNumber: restaurant.whatsappNumber,
+      phoneNumber: restaurant.phoneNumber,
+      instagramHandle: restaurant.instagramHandle,
+      tiktokHandle: restaurant.tiktokHandle,
+      facebookUrl: restaurant.facebookUrl,
       createdAt: restaurant.createdAt,
-      outletCount: count(outlet.id),
+      updatedAt: restaurant.updatedAt,
+      outletCount: sql<number>`(
+        select count(*)::int
+        from ${outlet} as total_outlets
+        where total_outlets.restaurant_id = ${restaurant.id}
+      )`,
     })
       .from(restaurant)
       .leftJoin(outlet, eq(outlet.restaurantId, restaurant.id))
@@ -134,10 +287,115 @@ adminRoutes.get("/restaurants", requireAdmin, zValidator("query", adminRestauran
       .orderBy(desc(restaurant.createdAt))
       .limit(limit)
       .offset(offset),
-    db.select({ count: count() }).from(restaurant).where(where),
+    db.select({ count: sql<number>`count(distinct ${restaurant.id})::int` })
+      .from(restaurant)
+      .leftJoin(outlet, eq(outlet.restaurantId, restaurant.id))
+      .where(where),
   ]);
 
   return success(c, { restaurants, total: totalResult[0]?.count ?? 0, page, limit });
+});
+
+adminRoutes.post("/restaurants", requireAdmin, zValidator("json", adminCreateRestaurantSchema), async (c) => {
+  const payload = c.req.valid("json");
+  const { photos = [], ...rest } = payload;
+
+  const values: typeof restaurant.$inferInsert = {
+    name: rest.name,
+    description: rest.description,
+    cuisineTags: rest.cuisineTags,
+    halalCertified: rest.halalCertified,
+    operatingHours: rest.operatingHours,
+    whatsappNumber: rest.whatsappNumber,
+    phoneNumber: rest.phoneNumber,
+    instagramHandle: rest.instagramHandle,
+    tiktokHandle: rest.tiktokHandle,
+    facebookUrl: rest.facebookUrl,
+    defaultBogoLimit: rest.defaultBogoLimit,
+    defaultAvgTableSpend: rest.defaultAvgTableSpend,
+    status: "pending",
+  };
+
+  const created = await withRestaurantPhotoTransaction(db, async (tx) => {
+    const [inserted] = await tx.insert(restaurant).values(values).returning();
+    await replaceRestaurantPhotos(tx, inserted.id, photos);
+    return inserted;
+  });
+
+  return success(c, created, 201);
+});
+
+adminRoutes.get("/restaurants/cuisine-tags", requireAdmin, async (c) => {
+  const rows = await db
+    .select({ cuisineTags: restaurant.cuisineTags })
+    .from(restaurant)
+    .where(sql`${restaurant.cuisineTags} is not null`);
+
+  const tags = Array.from(
+    new Set(rows.flatMap((row) => row.cuisineTags ?? []))
+  ).sort((a, b) => a.localeCompare(b));
+
+  return success(c, { tags });
+});
+
+adminRoutes.put("/restaurants/:id", requireAdmin, zValidator("json", adminUpdateRestaurantSchema), async (c) => {
+  const { id } = c.req.param();
+  const payload = c.req.valid("json");
+  const { photos, ...rest } = payload;
+
+  const [existingRestaurant] = await db
+    .select({ status: restaurant.status })
+    .from(restaurant)
+    .where(eq(restaurant.id, id))
+    .limit(1);
+
+  if (!existingRestaurant) {
+    return error(c, "NOT_FOUND", "Restaurant not found", 404);
+  }
+
+  if (existingRestaurant.status === "archived") {
+    return error(c, "FORBIDDEN", "Archived restaurants are read-only", 403);
+  }
+
+  const updates = Object.fromEntries(
+    Object.entries(rest).filter(([, value]) => value !== undefined)
+  );
+
+  if (Object.keys(updates).length === 0 && photos === undefined) {
+    return error(c, "VALIDATION_ERROR", "No valid fields to update", 400);
+  }
+
+  const updated = await withRestaurantPhotoTransaction(db, async (tx) => {
+    let nextRestaurant = null;
+
+    if (Object.keys(updates).length > 0) {
+      const [row] = await tx
+        .update(restaurant)
+        .set(updates)
+        .where(eq(restaurant.id, id))
+        .returning();
+      nextRestaurant = row ?? null;
+    } else {
+      const [row] = await tx.select().from(restaurant).where(eq(restaurant.id, id)).limit(1);
+      nextRestaurant = row ?? null;
+    }
+
+    if (!nextRestaurant) {
+      return null;
+    }
+
+    if (photos !== undefined) {
+      await replaceRestaurantPhotos(tx, nextRestaurant.id, photos);
+    }
+
+    return nextRestaurant;
+  });
+
+  if (!updated) {
+    return error(c, "NOT_FOUND", "Restaurant not found", 404);
+  }
+
+  return success(c, updated);
 });
 
 adminRoutes.get("/restaurants/:id", requireAdmin, async (c) => {
@@ -146,9 +404,402 @@ adminRoutes.get("/restaurants/:id", requireAdmin, async (c) => {
   const [rest] = await db.select().from(restaurant).where(eq(restaurant.id, id)).limit(1);
   if (!rest) return error(c, "NOT_FOUND", "Restaurant not found", 404);
 
-  const outlets = await db.select().from(outlet).where(eq(outlet.restaurantId, id));
+  const [outlets, photos] = await Promise.all([
+    db.select().from(outlet).where(eq(outlet.restaurantId, id)),
+    db.select()
+      .from(restaurantPhoto)
+      .where(and(eq(restaurantPhoto.restaurantId, id), isNull(restaurantPhoto.outletId)))
+      .orderBy(asc(restaurantPhoto.sortOrder), asc(restaurantPhoto.createdAt)),
+  ]);
 
-  return success(c, { ...rest, outlets });
+  return success(c, { ...rest, photos, outlets });
+});
+
+adminRoutes.post("/restaurants/:id/activate", requireAdmin, async (c) => {
+  const { id } = c.req.param();
+  const result = await updateRestaurantLifecycleStatus(id, "active");
+
+  if (result.kind === "not_found") {
+    return error(c, "NOT_FOUND", "Restaurant not found", 404);
+  }
+
+  if (result.kind === "archived_locked") {
+    return error(c, "FORBIDDEN", "Archived restaurants are read-only", 403);
+  }
+
+  return success(c, result.restaurant);
+});
+
+adminRoutes.post("/restaurants/:id/suspend", requireAdmin, async (c) => {
+  const { id } = c.req.param();
+  const result = await updateRestaurantLifecycleStatus(id, "suspended");
+
+  if (result.kind === "not_found") {
+    return error(c, "NOT_FOUND", "Restaurant not found", 404);
+  }
+
+  if (result.kind === "archived_locked") {
+    return error(c, "FORBIDDEN", "Archived restaurants are read-only", 403);
+  }
+
+  return success(c, result.restaurant);
+});
+
+adminRoutes.post("/restaurants/:id/archive", requireAdmin, async (c) => {
+  const { id } = c.req.param();
+  const result = await updateRestaurantLifecycleStatus(id, "archived");
+
+  if (result.kind === "not_found") {
+    return error(c, "NOT_FOUND", "Restaurant not found", 404);
+  }
+
+  if (result.kind === "archived_locked") {
+    return error(c, "FORBIDDEN", "Archived restaurants are read-only", 403);
+  }
+
+  return success(c, result.restaurant);
+});
+
+adminRoutes.post("/restaurants/:restaurantId/outlets", requireAdmin, zValidator("json", adminCreateOutletSchema), async (c) => {
+  const { restaurantId } = c.req.param();
+  const payload = c.req.valid("json");
+  const { photos = [], ...rest } = payload;
+
+  const [parentRestaurant] = await db
+    .select()
+    .from(restaurant)
+    .where(eq(restaurant.id, restaurantId))
+    .limit(1);
+
+  if (!parentRestaurant) {
+    return error(c, "NOT_FOUND", "Restaurant not found", 404);
+  }
+
+  if (parentRestaurant.status === "archived") {
+    return error(c, "FORBIDDEN", "Archived restaurants are read-only", 403);
+  }
+
+  const nextStatus = rest.status ?? "pending";
+  const nextIsOpen = nextStatus === "active" && parentRestaurant.status === "active"
+    ? (rest.isOpen ?? true)
+    : false;
+
+  const values: typeof outlet.$inferInsert = {
+    restaurantId,
+    label: rest.label,
+    address: rest.address,
+    lat: rest.lat,
+    lng: rest.lng,
+    operatingHours: rest.operatingHours ?? parentRestaurant.operatingHours,
+    isOpen: nextIsOpen,
+    bogoLimit: rest.bogoLimit ?? parentRestaurant.defaultBogoLimit,
+    avgTableSpend: rest.avgTableSpend ?? parentRestaurant.defaultAvgTableSpend,
+    whatsappNumber: rest.whatsappNumber,
+    phoneContact: rest.phoneContact,
+    instagramHandle: rest.instagramHandle,
+    status: nextStatus,
+  };
+
+  const created = await withRestaurantPhotoTransaction(db, async (tx) => {
+    const [inserted] = await tx.insert(outlet).values(values).returning();
+    await replaceOutletPhotos(tx, inserted.id, photos);
+    return inserted;
+  });
+
+  return success(c, created, 201);
+});
+
+adminRoutes.get("/outlets/:outletId", requireAdmin, async (c) => {
+  const { outletId } = c.req.param();
+
+  const [record] = await db.select().from(outlet).where(eq(outlet.id, outletId)).limit(1);
+  if (!record) {
+    return error(c, "NOT_FOUND", "Outlet not found", 404);
+  }
+
+  const photos = await db
+    .select()
+    .from(restaurantPhoto)
+    .where(and(eq(restaurantPhoto.outletId, outletId), isNull(restaurantPhoto.restaurantId)))
+    .orderBy(asc(restaurantPhoto.sortOrder), asc(restaurantPhoto.createdAt));
+
+  return success(c, { ...record, photos });
+});
+
+adminRoutes.put("/outlets/:outletId", requireAdmin, zValidator("json", adminUpdateOutletSchema), async (c) => {
+  const { outletId } = c.req.param();
+  const payload = c.req.valid("json");
+  const { photos, ...rest } = payload;
+
+  const [existingContext] = await db
+    .select({
+      outletStatus: outlet.status,
+      restaurantStatus: restaurant.status,
+    })
+    .from(outlet)
+    .innerJoin(restaurant, eq(restaurant.id, outlet.restaurantId))
+    .where(eq(outlet.id, outletId))
+    .limit(1);
+
+  if (!existingContext) {
+    return error(c, "NOT_FOUND", "Outlet not found", 404);
+  }
+
+  if (existingContext.outletStatus === "archived" || existingContext.restaurantStatus === "archived") {
+    return error(c, "FORBIDDEN", "Archived outlet context is read-only", 403);
+  }
+
+  const updates = Object.fromEntries(
+    Object.entries(rest).filter(([, value]) => value !== undefined)
+  );
+
+  if (Object.keys(updates).length === 0 && photos === undefined) {
+    return error(c, "VALIDATION_ERROR", "No valid fields to update", 400);
+  }
+
+  if ("status" in updates || "isOpen" in updates) {
+    const [existingOutlet] = await db
+      .select({
+        status: outlet.status,
+        restaurantStatus: restaurant.status,
+      })
+      .from(outlet)
+      .innerJoin(restaurant, eq(restaurant.id, outlet.restaurantId))
+      .where(eq(outlet.id, outletId))
+      .limit(1);
+
+    if (!existingOutlet) {
+      return error(c, "NOT_FOUND", "Outlet not found", 404);
+    }
+
+    const nextStatus = updates.status ?? existingOutlet.status;
+    if (nextStatus !== "active" || existingOutlet.restaurantStatus !== "active") {
+      updates.isOpen = false;
+    }
+  }
+
+  const updated = await withRestaurantPhotoTransaction(db, async (tx) => {
+    let nextOutlet = null;
+
+    if (Object.keys(updates).length > 0) {
+      const [row] = await tx
+        .update(outlet)
+        .set(updates)
+        .where(eq(outlet.id, outletId))
+        .returning();
+      nextOutlet = row ?? null;
+    } else {
+      const [row] = await tx.select().from(outlet).where(eq(outlet.id, outletId)).limit(1);
+      nextOutlet = row ?? null;
+    }
+
+    if (!nextOutlet) {
+      return null;
+    }
+
+    if (photos !== undefined) {
+      await replaceOutletPhotos(tx, nextOutlet.id, photos);
+    }
+
+    return nextOutlet;
+  });
+
+  if (!updated) {
+    return error(c, "NOT_FOUND", "Outlet not found", 404);
+  }
+
+  return success(c, updated);
+});
+
+adminRoutes.post("/outlets/:outletId/activate", requireAdmin, async (c) => {
+  const { outletId } = c.req.param();
+
+  const [existingOutlet] = await db
+    .select({
+      outletStatus: outlet.status,
+      restaurantStatus: restaurant.status,
+    })
+    .from(outlet)
+    .innerJoin(restaurant, eq(restaurant.id, outlet.restaurantId))
+    .where(eq(outlet.id, outletId))
+    .limit(1);
+
+  if (!existingOutlet) {
+    return error(c, "NOT_FOUND", "Outlet not found", 404);
+  }
+
+  if (existingOutlet.outletStatus === "archived" || existingOutlet.restaurantStatus === "archived") {
+    return error(c, "FORBIDDEN", "Archived outlet context is read-only", 403);
+  }
+
+  const [updated] = await db
+    .update(outlet)
+    .set({ status: "active", isOpen: existingOutlet.restaurantStatus === "active" })
+    .where(eq(outlet.id, outletId))
+    .returning();
+
+  return success(c, updated);
+});
+
+adminRoutes.post("/outlets/:outletId/suspend", requireAdmin, async (c) => {
+  const { outletId } = c.req.param();
+
+  const [existingOutlet] = await db
+    .select({
+      outletStatus: outlet.status,
+      restaurantStatus: restaurant.status,
+    })
+    .from(outlet)
+    .innerJoin(restaurant, eq(restaurant.id, outlet.restaurantId))
+    .where(eq(outlet.id, outletId))
+    .limit(1);
+
+  if (!existingOutlet) {
+    return error(c, "NOT_FOUND", "Outlet not found", 404);
+  }
+
+  if (existingOutlet.outletStatus === "archived" || existingOutlet.restaurantStatus === "archived") {
+    return error(c, "FORBIDDEN", "Archived outlet context is read-only", 403);
+  }
+
+  const [updated] = await db
+    .update(outlet)
+    .set({ status: "suspended", isOpen: false })
+    .where(eq(outlet.id, outletId))
+    .returning();
+
+  if (!updated) {
+    return error(c, "NOT_FOUND", "Outlet not found", 404);
+  }
+
+  return success(c, updated);
+});
+
+adminRoutes.post("/outlets/:outletId/archive", requireAdmin, async (c) => {
+  const { outletId } = c.req.param();
+
+  const [existingOutlet] = await db
+    .select({
+      outletStatus: outlet.status,
+      restaurantStatus: restaurant.status,
+    })
+    .from(outlet)
+    .innerJoin(restaurant, eq(restaurant.id, outlet.restaurantId))
+    .where(eq(outlet.id, outletId))
+    .limit(1);
+
+  if (!existingOutlet) {
+    return error(c, "NOT_FOUND", "Outlet not found", 404);
+  }
+
+  if (existingOutlet.outletStatus === "archived" || existingOutlet.restaurantStatus === "archived") {
+    return error(c, "FORBIDDEN", "Archived outlet context is read-only", 403);
+  }
+
+  const [updated] = await db
+    .update(outlet)
+    .set({ status: "archived", isOpen: false })
+    .where(eq(outlet.id, outletId))
+    .returning();
+
+  if (!updated) {
+    return error(c, "NOT_FOUND", "Outlet not found", 404);
+  }
+
+  return success(c, updated);
+});
+
+adminRoutes.post("/outlets/:outletId/close", requireAdmin, zValidator("json", adminManualCloseOutletSchema), async (c) => {
+  const { outletId } = c.req.param();
+  const { reopenStrategy, customReopenAt } = c.req.valid("json");
+
+  const [existingOutlet] = await db
+    .select({
+      id: outlet.id,
+      operatingHours: outlet.operatingHours,
+      outletStatus: outlet.status,
+      restaurantStatus: restaurant.status,
+    })
+    .from(outlet)
+    .innerJoin(restaurant, eq(restaurant.id, outlet.restaurantId))
+    .where(eq(outlet.id, outletId))
+    .limit(1);
+
+  if (!existingOutlet) {
+    return error(c, "NOT_FOUND", "Outlet not found", 404);
+  }
+
+  if (existingOutlet.outletStatus === "archived" || existingOutlet.restaurantStatus === "archived") {
+    return error(c, "FORBIDDEN", "Archived outlet context is read-only", 403);
+  }
+
+  const computedReopenAt = reopenStrategy === "custom"
+    ? new Date(customReopenAt!)
+    : reopenStrategy === "next_hours"
+      ? getNextOpenTime((existingOutlet.operatingHours as Record<string, unknown> | null | undefined) ?? null)
+      : null;
+
+  const [updated] = await db
+    .update(outlet)
+    .set({
+      isManuallyClosed: true,
+      manualCloseReopenStrategy: reopenStrategy,
+      manualCloseReopenAt: computedReopenAt,
+      isOpen: false,
+    })
+    .where(eq(outlet.id, outletId))
+    .returning();
+
+  return success(c, updated);
+});
+
+adminRoutes.post("/outlets/:outletId/open", requireAdmin, async (c) => {
+  const { outletId } = c.req.param();
+
+  const [existingOutlet] = await db
+    .select({
+      status: outlet.status,
+      operatingHours: outlet.operatingHours,
+      outletStatus: outlet.status,
+      restaurantStatus: restaurant.status,
+    })
+    .from(outlet)
+    .innerJoin(restaurant, eq(restaurant.id, outlet.restaurantId))
+    .where(eq(outlet.id, outletId))
+    .limit(1);
+
+  if (!existingOutlet) {
+    return error(c, "NOT_FOUND", "Outlet not found", 404);
+  }
+
+  if (existingOutlet.outletStatus === "archived" || existingOutlet.restaurantStatus === "archived") {
+    return error(c, "FORBIDDEN", "Archived outlet context is read-only", 403);
+  }
+
+  const [updated] = await db
+    .update(outlet)
+    .set({
+      isManuallyClosed: false,
+      manualCloseReopenStrategy: "indefinite",
+      manualCloseReopenAt: null,
+      isOpen: computeOutletIsOpen({
+        outlet: {
+          status: existingOutlet.status,
+          operatingHours: (existingOutlet.operatingHours as Record<string, unknown> | null | undefined) ?? null,
+          isManuallyClosed: false,
+          manualCloseReopenStrategy: "indefinite",
+          manualCloseReopenAt: null,
+        },
+        restaurant: {
+          status: existingOutlet.restaurantStatus,
+        },
+        now: new Date(),
+      }),
+    })
+    .where(eq(outlet.id, outletId))
+    .returning();
+
+  return success(c, updated);
 });
 
 // ─── A3: Redemptions ────────────────────────────────────────
