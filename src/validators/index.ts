@@ -217,3 +217,49 @@ export const adminManualCloseOutletSchema = z.object({
     });
   }
 });
+
+// Banners
+export const createBannerSchema = z.object({
+  title: z.string().min(1).max(200),
+  imageUrl: z.string().url(),
+  linkType: z.enum(["restaurant", "external", "none"]).optional(),
+  linkRef: z.string().max(500).optional(),
+  startsAt: z.string().datetime({ offset: true }),
+  endsAt: z.string().datetime({ offset: true }),
+  sortOrder: z.number().int().min(0).optional(),
+});
+
+export const updateBannerSchema = createBannerSchema.partial();
+
+export const bannerListQuerySchema = z.object({
+  includeInactive: queryBoolean.optional(),
+});
+
+// Curated lists
+export const createCuratedListSchema = z.object({
+  title: z.string().min(1).max(200),
+  subtitle: z.string().max(300).optional(),
+  tag: z.string().max(50).optional(),
+  sortOrder: z.number().int().min(0).optional(),
+  startsAt: z.string().datetime({ offset: true }).optional(),
+  endsAt: z.string().datetime({ offset: true }).optional(),
+  restaurantIds: z.array(z.string().min(1)).optional(),
+});
+
+export const updateCuratedListSchema = createCuratedListSchema.partial().extend({
+  restaurantIds: z.array(z.string().min(1)).optional(),
+});
+
+export const curatedListQuerySchema = z.object({
+  includeInactive: queryBoolean.optional(),
+});
+
+export const addRestaurantToListSchema = z.object({
+  restaurantId: z.string().min(1),
+  sortOrder: z.number().int().min(0).optional(),
+});
+
+// Homepage section query validators
+export const sectionLimitSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(20).default(10),
+});
