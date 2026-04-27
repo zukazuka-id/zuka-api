@@ -320,6 +320,52 @@ export const device = pgTable("device", {
 }));
 
 // ========================================
+// Content Management Tables
+// ========================================
+
+export const banner = pgTable("banner", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  title: text("title").notNull(),
+  imageUrl: text("image_url").notNull(),
+  linkType: text("link_type"),
+  linkRef: text("link_ref"),
+  startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+  endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+  sortOrder: integer("sort_order").default(0).notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const curatedList = pgTable("curated_list", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  title: text("title").notNull(),
+  subtitle: text("subtitle"),
+  tag: text("tag"),
+  sortOrder: integer("sort_order").default(0).notNull(),
+  startsAt: timestamp("starts_at", { withTimezone: true }),
+  endsAt: timestamp("ends_at", { withTimezone: true }),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const curatedListRestaurant = pgTable("curated_list_restaurant", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  curatedListId: text("curated_list_id")
+    .notNull()
+    .references(() => curatedList.id, { onDelete: "cascade" }),
+  restaurantId: text("restaurant_id")
+    .notNull()
+    .references(() => restaurant.id, { onDelete: "cascade" }),
+  sortOrder: integer("sort_order").default(0).notNull(),
+});
+
+// ========================================
 // Relations
 // ========================================
 
@@ -352,6 +398,7 @@ export const authCredentialRelations = relations(authCredential, ({ one }) => ({
 export const restaurantRelations = relations(restaurant, ({ many }) => ({
   outlets: many(outlet),
   photos: many(restaurantPhoto),
+  curatedListEntries: many(curatedListRestaurant),
 }));
 
 export const outletRelations = relations(outlet, ({ one, many }) => ({
@@ -435,5 +482,20 @@ export const deviceRelations = relations(device, ({ one }) => ({
   account: one(user, {
     fields: [device.accountId],
     references: [user.id],
+  }),
+}));
+
+export const curatedListRelations = relations(curatedList, ({ many }) => ({
+  restaurants: many(curatedListRestaurant),
+}));
+
+export const curatedListRestaurantRelations = relations(curatedListRestaurant, ({ one }) => ({
+  curatedList: one(curatedList, {
+    fields: [curatedListRestaurant.curatedListId],
+    references: [curatedList.id],
+  }),
+  restaurant: one(restaurant, {
+    fields: [curatedListRestaurant.restaurantId],
+    references: [restaurant.id],
   }),
 }));
