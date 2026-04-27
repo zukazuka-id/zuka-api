@@ -7,8 +7,15 @@ import {
 } from "../db/schema.js";
 import { eq, ilike, or, and, inArray, sql, isNotNull, gt, lt } from "drizzle-orm";
 import { zValidator } from "@hono/zod-validator";
-import { nearbyQuerySchema } from "../validators/index.js";
+import { nearbyQuerySchema, sectionLimitSchema } from "../validators/index.js";
 import { success, paginated, error } from "../lib/response.js";
+import {
+  getTrendingRestaurants,
+  getNewRestaurants,
+  getNearbyRestaurants,
+  getPopularRestaurants,
+  getRecommendedRestaurants,
+} from "../lib/restaurant-curation-service.js";
 
 const restaurantRoutes = new Hono();
 
@@ -228,6 +235,62 @@ restaurantRoutes.get("/nearby", zValidator("query", nearbyQuerySchema), async (c
 
   return success(c, { restaurants });
 });
+
+// GET /restaurants/trending — trending restaurants (most redeemed this week)
+restaurantRoutes.get("/trending", zValidator("query", sectionLimitSchema), async (c) => {
+  const { limit } = c.req.valid("query");
+  const data = await getTrendingRestaurants(limit);
+  return success(c, data);
+});
+
+// GET /restaurants/new — recently added restaurants
+restaurantRoutes.get("/new", zValidator("query", sectionLimitSchema), async (c) => {
+  const { limit } = c.req.valid("query");
+  const data = await getNewRestaurants(limit);
+  return success(c, data);
+});
+
+// GET /restaurants/popular — most redeemed all time
+restaurantRoutes.get(
+  "/popular",
+  zValidator("query", sectionLimitSchema),
+  async (c) => {
+    const { limit } = c.req.valid("query");
+    const latStr = c.req.query("lat");
+    const lngStr = c.req.query("lng");
+    const lat = latStr ? parseFloat(latStr) : undefined;
+    const lng = lngStr ? parseFloat(lngStr) : undefined;
+
+    const data = await getPopularRestaurants(
+      lat != null && !isNaN(lat) ? lat : undefined,
+      lng != null && !isNaN(lng) ? lng : undefined,
+      limit
+    );
+    return success(c, data);
+  }
+);
+
+// GET /restaurants/recommended — personalized or fallback to popular
+restaurantRoutes.get(
+  "/recommended",
+  zValidator("query", sectionLimitSchema),
+  async (c) => {
+    const { limit } = c.req.valid("query");
+    const latStr = c.req.query("lat");
+    const lngStr = c.req.query("lng");
+    const lat = latStr ? parseFloat(latStr) : undefined;
+    const lng = lngStr ? parseFloat(lngStr) : undefined;
+    const accountId = c.get("user")?.id as string | null;
+
+    const data = await getRecommendedRestaurants(
+      accountId,
+      lat != null && !isNaN(lat) ? lat : undefined,
+      lng != null && !isNaN(lng) ? lng : undefined,
+      limit
+    );
+    return success(c, data);
+  }
+);
 
 // GET /restaurants/:id — full detail with outlets + photos
 restaurantRoutes.get("/:id", async (c) => {

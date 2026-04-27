@@ -22,6 +22,13 @@ import {
   adminConfigUpsertSchema,
   adminUpdateOutletSchema,
   adminUpdateRestaurantSchema,
+  createBannerSchema,
+  updateBannerSchema,
+  bannerListQuerySchema,
+  createCuratedListSchema,
+  updateCuratedListSchema,
+  curatedListQuerySchema,
+  addRestaurantToListSchema,
 } from "../validators/index.js";
 import {
   user,
@@ -36,6 +43,21 @@ import {
   platformConfig,
 } from "../db/schema.js";
 import { eq, sql, and, desc, ilike, like, gte, lte, count, isNull, asc } from "drizzle-orm";
+import {
+  getActiveBanners,
+  getAllBanners,
+  createBanner,
+  updateBanner,
+  deleteBanner,
+} from "../lib/banner-service.js";
+import {
+  getAllCuratedLists,
+  createCuratedList,
+  updateCuratedList,
+  deleteCuratedList,
+  addRestaurantToList,
+  removeRestaurantFromList,
+} from "../lib/curated-list-service.js";
 
 const adminRoutes = new Hono();
 
@@ -988,6 +1010,94 @@ adminRoutes.delete("/config/:key", requireAdmin, async (c) => {
     return error(c, "NOT_FOUND", "Config key not found", 404);
   }
   await db.delete(platformConfig).where(eq(platformConfig.key, key));
+  return success(c, { deleted: true });
+});
+
+// ─── Cron: Keep Warm ─────────────────────────────────────────────────────
+// Prevents cold starts by pingging every 4 minutes via Vercel Cron
+// No auth required - only responds to Vercel's cron requests
+adminRoutes.get("/cron/keep-warm", async (c) => {
+  const authHeader = c.req.header("authorization");
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return error(c, "UNAUTHORIZED", "Invalid cron signature", 401);
+  }
+  return success(c, { warmed: true, timestamp: new Date().toISOString() });
+});
+
+// ─── Banners ──────────────────────────────────────────────────────────────
+
+adminRoutes.get("/banners", requireAdmin, zValidator("query", bannerListQuerySchema), async (c) => {
+  const { includeInactive } = c.req.valid("query");
+  const banners = await getAllBanners(includeInactive);
+  return success(c, banners);
+});
+
+adminRoutes.post("/banners", requireAdmin, zValidator("json", createBannerSchema), async (c) => {
+  const data = c.req.valid("json");
+  const created = await createBanner(data);
+  return success(c, created, 201);
+});
+
+adminRoutes.patch("/banners/:id", requireAdmin, zValidator("json", updateBannerSchema), async (c) => {
+  const { id } = c.req.param();
+  const data = c.req.valid("json");
+  const updated = await updateBanner(id, data);
+  if (!updated) return error(c, "NOT_FOUND", "Banner not found", 404);
+  return success(c, updated);
+});
+
+adminRoutes.delete("/banners/:id", requireAdmin, async (c) => {
+  const { id } = c.req.param();
+  const deleted = await deleteBanner(id);
+  if (!deleted) return error(c, "NOT_FOUND", "Banner not found", 404);
+  return success(c, { deleted: true });
+});
+
+// ─── Curated Lists ────────────────────────────────────────────────────────
+
+adminRoutes.get("/curated-lists", requireAdmin, zValidator("query", curatedListQuerySchema), async (c) => {
+  const { includeInactive } = c.req.valid("query");
+  const lists = await getAllCuratedLists(includeInactive);
+  return success(c, lists);
+});
+
+adminRoutes.post("/curated-lists", requireAdmin, zValidator("json", createCuratedListSchema), async (c) => {
+  const data = c.req.valid("json");
+  const created = await createCuratedList(data);
+  return success(c, created, 201);
+});
+
+adminRoutes.patch("/curated-lists/:id", requireAdmin, zValidator("json", updateCuratedListSchema), async (c) => {
+  const { id } = c.req.param();
+  const data = c.req.valid("json");
+  const updated = await updateCuratedList(id, data);
+  if (!updated) return error(c, "NOT_FOUND", "Curated list not found", 404);
+  return success(c, updated);
+});
+
+adminRoutes.delete("/curated-lists/:id", requireAdmin, async (c) => {
+  const { id } = c.req.param();
+  const deleted = await deleteCuratedList(id);
+  if (!deleted) return error(c, "NOT_FOUND", "Curated list not found", 404);
+  return success(c, { deleted: true });
+});
+
+adminRoutes.post(
+  "/curated-lists/:id/restaurants",
+  requireAdmin,
+  zValidator("json", addRestaurantToListSchema),
+  async (c) => {
+    const { id } = c.req.param();
+    const { restaurantId, sortOrder } = c.req.valid("json");
+    const added = await addRestaurantToList(id, restaurantId, sortOrder);
+    return success(c, added, 201);
+  }
+);
+
+adminRoutes.delete("/curated-lists/:listId/restaurants/:restaurantId", requireAdmin, async (c) => {
+  const { listId, restaurantId } = c.req.param();
+  const removed = await removeRestaurantFromList(listId, restaurantId);
+  if (!removed) return error(c, "NOT_FOUND", "Restaurant not in list", 404);
   return success(c, { deleted: true });
 });
 

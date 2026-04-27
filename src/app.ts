@@ -20,6 +20,8 @@ import { outletRoutes } from "./routes/outlets.js";
 import { adminRoutes } from "./routes/admin.js";
 import { configRoutes } from "./routes/config.js";
 import { deviceRoutes } from "./routes/devices.js";
+import { bannerRoutes } from "./routes/banners.js";
+import { curatedListRoutes } from "./routes/curated-lists.js";
 import { docsApp } from "./openapi-routes.js";
 
 // ── OpenAPI Spec Generation ───────────────────────────────────
@@ -55,17 +57,26 @@ export const app = new Hono<{ Variables: UserVars }>();
 
 // Global middleware
 app.use("*", logger());
-const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
-    ? process.env.ALLOWED_ORIGINS.split(",")
-    : [
-          "http://localhost:3000",
-          "http://localhost:3001",
-          "http://localhost:7490",
-          "http://localhost:7491",
-          "http://localhost:7492",
-          "http://100.122.155.96:7689",
-          "http://localhost:7689",
-      ];
+const DEFAULT_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:7490",
+    "http://localhost:7491",
+    "http://localhost:7492",
+    "http://localhost:7689",
+    "http://100.122.155.96:7689",
+    "capacitor://localhost",
+    "https://zuka-member.vercel.app",
+];
+
+const ALLOWED_ORIGINS = Array.from(
+    new Set([
+        ...DEFAULT_ALLOWED_ORIGINS,
+        ...(process.env.ALLOWED_ORIGINS
+            ? process.env.ALLOWED_ORIGINS.split(",")
+            : []),
+    ]),
+);
 
 app.use(
     "*",
@@ -163,5 +174,7 @@ app.route("/api/v1/outlets", outletRoutes);
 app.route("/api/v1/admin", adminRoutes);
 app.route("/api/v1/config", configRoutes);
 app.route("/api/v1/devices", deviceRoutes);
+app.route("/api/v1/banners", bannerRoutes);
+app.route("/api/v1/curated-lists", curatedListRoutes);
 
 export type AppType = typeof app;
