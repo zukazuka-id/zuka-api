@@ -1,6 +1,11 @@
 import { db } from "../db/index.js";
-import { restaurant, outlet, redemption } from "../db/schema.js";
+import { restaurant, outlet, redemption, restaurantPhoto } from "../db/schema.js";
 import { eq, and, sql, gte, desc } from "drizzle-orm";
+
+const photoSubquery = sql<string>`coalesce(
+  (SELECT rp.url FROM restaurant_photo rp WHERE rp.restaurant_id = ${restaurant.id} ORDER BY rp.sort_order LIMIT 1),
+  ${restaurant.logo}
+)`;
 
 interface CuratedRestaurant {
   id: string;
@@ -15,7 +20,7 @@ const baseFields = {
   id: restaurant.id,
   name: restaurant.name,
   cuisine: restaurant.cuisineTags,
-  photo: restaurant.logo,
+  photo: photoSubquery,
   isOpen: outlet.isOpen,
 };
 

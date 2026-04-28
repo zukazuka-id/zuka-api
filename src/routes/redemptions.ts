@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index.js";
-import { redemption, outlet, subscription, user } from "../db/schema.js";
-import { eq, and, gte, sql, desc } from "drizzle-orm";
+import { redemption, outlet, subscription, user, restaurant } from "../db/schema.js";
+import { eq, and, gte, sql, desc, inArray } from "drizzle-orm";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { success, paginated, error } from "../lib/response.js";
 import { createRedemptionSchema, verifyRedemptionSchema } from "../validators/index.js";
@@ -136,6 +136,69 @@ redemptionRoutes.post("/verify", requireRole("owner", "manager", "staff"), zVali
   const [out] = await db.select({ label: outlet.label }).from(outlet).where(eq(outlet.id, red.outletId)).limit(1);
 
   return success(c, { redemption: updated, member, outlet: out });
+});
+
+// GET /redemptions/check/:restaurantId — check eligibility for a restaurant
+redemptionRoutes.get("/check/:restaurantId", requireAuth, async (c) => {
+  const authUser = c.get("user") as UserVars["user"];
+  const restaurantId = c.req.param("restaurantId");
+
+  // Verify restaurant exists
+  const [rest] = await db
+    .select({ id: restaurant.id, defaultBogoLimit: restaurant.defaultBogoLimit })
+    .from(restaurant)
+    .where(eq(restaurant.id, restaurantId))
+    .limit(1);
+
+  if (!rest) {
+    return error(c, "NOT_FOUND", "Restaurant not found", 404);
+  }
+
+  // Check active subscription
+  const [sub] = await db
+    .select()
+    .from(subscription)
+    .where(and(eq(subscription.accountId, authUser.id), eq(subscription.status, "active")))
+    .limit(1);
+
+  if (!sub) {
+    return success(c, { eligible: false, remaining: 0, limit: 0 });
+  }
+
+  // Get all outlets for this restaurant
+  const outlets = await db
+    .select({ id: outlet.id, bogoLimit: outlet.bogoLimit })
+    .from(outlet)
+    .where(and(eq(outlet.restaurantId, restaurantId), eq(outlet.status, "active")));
+
+  if (outlets.length === 0) {
+    return success(c, { eligible: false, remaining: 0, limit: 0 });
+  }
+
+  const outletIds = outlets.map((o) => o.id);
+  const limit = outlets[0].bogoLimit ?? rest.defaultBogoLimit;
+
+  // Count redemptions this year across all outlets
+  const yearStart = new Date(new Date().getFullYear(), 0, 1);
+  const [countResult] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(redemption)
+    .where(
+      and(
+        eq(redemption.accountId, authUser.id),
+        inArray(redemption.outletId, outletIds),
+        gte(redemption.createdAt, yearStart)
+      )
+    );
+
+  const used = Number(countResult?.count ?? 0);
+  const remaining = Math.max(0, limit - used);
+
+  return success(c, {
+    eligible: remaining > 0,
+    remaining,
+    limit,
+  });
 });
 
 // GET /redemptions/my — member's redemption history

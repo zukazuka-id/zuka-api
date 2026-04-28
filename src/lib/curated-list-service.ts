@@ -1,8 +1,13 @@
 import { db } from "../db/index.js";
-import { curatedList, curatedListRestaurant, restaurant, outlet } from "../db/schema.js";
+import { curatedList, curatedListRestaurant, restaurant, outlet, restaurantPhoto } from "../db/schema.js";
 import { eq, and, sql, asc } from "drizzle-orm";
 import type { z } from "zod";
 import type { createCuratedListSchema, updateCuratedListSchema } from "../validators/index.js";
+
+const photoSubquery = sql<string>`coalesce(
+  (SELECT rp.url FROM restaurant_photo rp WHERE rp.restaurant_id = ${restaurant.id} ORDER BY rp.sort_order LIMIT 1),
+  ${restaurant.logo}
+)`;
 
 export async function getActiveCuratedLists(lat?: number, lng?: number) {
   const now = sql`now()`;
@@ -54,7 +59,7 @@ async function getListRestaurants(listId: string, lat?: number, lng?: number) {
       name: restaurant.name,
       cuisine: restaurant.cuisineTags,
       distance: distanceExpr,
-      photo: restaurant.logo,
+      photo: photoSubquery,
       isOpen: outlet.isOpen,
     })
     .from(curatedListRestaurant)
