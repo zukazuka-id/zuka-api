@@ -1,7 +1,7 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { app } from "../../app.js";
 import { db } from "../../db/index.js";
-import { restaurant, outlet } from "../../db/schema.js";
+import { restaurant, outlet, restaurantPhoto } from "../../db/schema.js";
 import { and, eq } from "drizzle-orm";
 
 const createdRestaurantIds: string[] = [];
@@ -161,6 +161,65 @@ describe("Restaurants Integration Tests", () => {
     expect(res.status).toBe(404);
   });
 
+  it("GET /restaurants/:id — returns restaurant-level photos separately and keeps outlet photos", async () => {
+    const [rest] = await db
+      .insert(restaurant)
+      .values({
+        name: `Detail Photos ${Date.now()}`,
+        status: "active",
+        logo: "https://example.com/logo.jpg",
+      })
+      .returning();
+    createdRestaurantIds.push(rest.id);
+
+    const [out] = await db
+      .insert(outlet)
+      .values({
+        restaurantId: rest.id,
+        label: "Detail Photos Outlet",
+        address: "Jl. Detail Photos No. 1",
+        status: "active",
+        isOpen: true,
+        lat: -6.25,
+        lng: 106.85,
+      })
+      .returning();
+    createdOutletIds.push(out.id);
+
+    await db.insert(restaurantPhoto).values([
+      {
+        restaurantId: rest.id,
+        url: "https://example.com/restaurant-cover.jpg",
+        label: "Restaurant cover",
+        sortOrder: 0,
+      },
+      {
+        outletId: out.id,
+        url: "https://example.com/outlet-cover.jpg",
+        label: "Outlet cover",
+        sortOrder: 0,
+      },
+    ]);
+
+    const res = await app.request(`/api/v1/restaurants/${rest.id}`);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.photos).toEqual([
+      expect.objectContaining({
+        url: "https://example.com/restaurant-cover.jpg",
+        label: "Restaurant cover",
+      }),
+    ]);
+    expect(body.data.outlets).toHaveLength(1);
+    expect(body.data.outlets[0].photos).toEqual([
+      expect.objectContaining({
+        url: "https://example.com/outlet-cover.jpg",
+        label: "Outlet cover",
+      }),
+    ]);
+  });
+
   it("GET /restaurants/discover — returns paginated results", async () => {
     const res = await app.request("/api/v1/restaurants/discover");
     const body = await res.json();
@@ -193,6 +252,67 @@ describe("Restaurants Integration Tests", () => {
     expect(body.success).toBe(true);
   });
 
+  it("GET /restaurants/discover — includes restaurant and outlet photos for discovery card consistency", async () => {
+    const suffix = Date.now();
+    const [rest] = await db
+      .insert(restaurant)
+      .values({
+        name: `Discover Media ${suffix}`,
+        status: "active",
+        cuisineTags: ["discover-media"],
+        logo: "https://example.com/discover-logo.jpg",
+      })
+      .returning();
+    createdRestaurantIds.push(rest.id);
+
+    const [out] = await db
+      .insert(outlet)
+      .values({
+        restaurantId: rest.id,
+        label: "Discover Media Outlet",
+        address: "Jl. Discover Media No. 1",
+        status: "active",
+        isOpen: true,
+        lat: -6.26,
+        lng: 106.86,
+      })
+      .returning();
+    createdOutletIds.push(out.id);
+
+    await db.insert(restaurantPhoto).values([
+      {
+        restaurantId: rest.id,
+        url: "https://example.com/discover-restaurant.jpg",
+        label: "Discover restaurant",
+        sortOrder: 0,
+      },
+      {
+        outletId: out.id,
+        url: "https://example.com/discover-outlet.jpg",
+        label: "Discover outlet",
+        sortOrder: 0,
+      },
+    ]);
+
+    const res = await app.request("/api/v1/restaurants/discover?cuisine=discover-media");
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    const found = body.data.find((row: { id: string }) => row.id === rest.id);
+    expect(found).toBeDefined();
+    expect(found.photos).toEqual([
+      expect.objectContaining({
+        url: "https://example.com/discover-restaurant.jpg",
+      }),
+    ]);
+    expect(found.outlets).toHaveLength(1);
+    expect(found.outlets[0].photos).toEqual([
+      expect.objectContaining({
+        url: "https://example.com/discover-outlet.jpg",
+      }),
+    ]);
+  });
+
   it("GET /restaurants/search — requires query param", async () => {
     const res = await app.request("/api/v1/restaurants/search");
     expect(res.status).toBe(400);
@@ -204,6 +324,77 @@ describe("Restaurants Integration Tests", () => {
     expect(res.status).toBe(200);
     expect(body.success).toBe(true);
     expect(body.data).toBeInstanceOf(Array);
+  });
+
+  it("GET /restaurants/search — returns discovery-card media fields with restaurant and outlet photos", async () => {
+    const suffix = Date.now();
+    const [rest] = await db
+      .insert(restaurant)
+      .values({
+        name: `Search Media ${suffix}`,
+        status: "active",
+        cuisineTags: ["search-media"],
+        description: "Search media description",
+        logo: "https://example.com/search-logo.jpg",
+      })
+      .returning();
+    createdRestaurantIds.push(rest.id);
+
+    const [out] = await db
+      .insert(outlet)
+      .values({
+        restaurantId: rest.id,
+        label: "Search Media Outlet",
+        address: "Jl. Search Media No. 1",
+        status: "active",
+        isOpen: true,
+        lat: -6.27,
+        lng: 106.87,
+      })
+      .returning();
+    createdOutletIds.push(out.id);
+
+    await db.insert(restaurantPhoto).values([
+      {
+        restaurantId: rest.id,
+        url: "https://example.com/search-restaurant.jpg",
+        label: "Search restaurant",
+        sortOrder: 0,
+      },
+      {
+        outletId: out.id,
+        url: "https://example.com/search-outlet.jpg",
+        label: "Search outlet",
+        sortOrder: 0,
+      },
+    ]);
+
+    const res = await app.request(`/api/v1/restaurants/search?q=${encodeURIComponent(`Search Media ${suffix}`)}`);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.success).toBe(true);
+    const found = body.data.find((row: { id: string }) => row.id === rest.id);
+    expect(found).toBeDefined();
+    expect(found.logo).toBe("https://example.com/search-logo.jpg");
+    expect(found.photos).toEqual([
+      expect.objectContaining({
+        url: "https://example.com/search-restaurant.jpg",
+      }),
+    ]);
+    expect(found.outlets).toHaveLength(1);
+    expect(found.outlets[0]).toEqual(
+      expect.objectContaining({
+        label: "Search Media Outlet",
+        address: "Jl. Search Media No. 1",
+        isOpen: true,
+      }),
+    );
+    expect(found.outlets[0].photos).toEqual([
+      expect.objectContaining({
+        url: "https://example.com/search-outlet.jpg",
+      }),
+    ]);
   });
 
   it("GET /restaurants/search — empty search returns empty array", async () => {

@@ -5,7 +5,7 @@ import {
   outlet,
   restaurantPhoto,
 } from "../db/schema.js";
-import { eq, ilike, or, and, inArray, sql, isNotNull, gt, lt } from "drizzle-orm";
+import { eq, ilike, or, and, inArray, sql, isNotNull, gt, lt, asc } from "drizzle-orm";
 import { zValidator } from "@hono/zod-validator";
 import { nearbyQuerySchema, sectionLimitSchema } from "../validators/index.js";
 import { success, paginated, error } from "../lib/response.js";
@@ -18,6 +18,124 @@ import {
 } from "../lib/restaurant-curation-service.js";
 
 const restaurantRoutes = new Hono();
+
+type GroupedRestaurantOutlet = {
+  id: string;
+  label: string;
+  address: string;
+  lat: number | null;
+  lng: number | null;
+  isOpen: boolean | null;
+  bogoLimit: number | null;
+  avgTableSpend: number | null;
+  photos?: Array<Record<string, unknown>>;
+};
+
+type GroupedRestaurant = {
+  id: string;
+  name: string;
+  description: string | null;
+  cuisineTags: string[] | null;
+  halalCertified: boolean | null;
+  logo: string | null;
+  photos?: Array<Record<string, unknown>>;
+  outlets: GroupedRestaurantOutlet[];
+};
+
+function groupRestaurantsFromRows(rows: Array<{
+  id: string;
+  name: string;
+  description: string | null;
+  cuisineTags: string[] | null;
+  halalCertified: boolean | null;
+  logo: string | null;
+  outletId: string;
+  outletLabel: string;
+  outletAddress: string;
+  lat: number | null;
+  lng: number | null;
+  isOpen: boolean | null;
+  bogoLimit: number | null;
+  avgTableSpend: number | null;
+}>): Map<string, GroupedRestaurant> {
+  const grouped = new Map<string, GroupedRestaurant>();
+
+  for (const row of rows) {
+    if (!grouped.has(row.id)) {
+      grouped.set(row.id, {
+        id: row.id,
+        name: row.name,
+        description: row.description,
+        cuisineTags: row.cuisineTags,
+        halalCertified: row.halalCertified,
+        logo: row.logo,
+        photos: [],
+        outlets: [],
+      });
+    }
+
+    grouped.get(row.id)!.outlets.push({
+      id: row.outletId,
+      label: row.outletLabel,
+      address: row.outletAddress,
+      lat: row.lat,
+      lng: row.lng,
+      isOpen: row.isOpen,
+      bogoLimit: row.bogoLimit,
+      avgTableSpend: row.avgTableSpend,
+      photos: [],
+    });
+  }
+
+  return grouped;
+}
+
+async function attachPhotosToGroupedRestaurants(
+  grouped: Map<string, GroupedRestaurant>,
+) {
+  const restaurantIds = Array.from(grouped.keys());
+  const outletIds = Array.from(grouped.values()).flatMap((resto) =>
+    resto.outlets.map((out) => out.id),
+  );
+
+  const restaurantLevelPhotos = restaurantIds.length
+    ? await db
+        .select()
+        .from(restaurantPhoto)
+        .where(inArray(restaurantPhoto.restaurantId, restaurantIds))
+        .orderBy(asc(restaurantPhoto.sortOrder), asc(restaurantPhoto.createdAt))
+    : [];
+
+  const outletLevelPhotos = outletIds.length
+    ? await db
+        .select()
+        .from(restaurantPhoto)
+        .where(inArray(restaurantPhoto.outletId, outletIds))
+        .orderBy(asc(restaurantPhoto.sortOrder), asc(restaurantPhoto.createdAt))
+    : [];
+
+  const restaurantPhotoMap = new Map<string, typeof restaurantLevelPhotos>();
+  for (const photo of restaurantLevelPhotos) {
+    const bucket = restaurantPhotoMap.get(photo.restaurantId!) ?? [];
+    bucket.push(photo);
+    restaurantPhotoMap.set(photo.restaurantId!, bucket);
+  }
+
+  const outletPhotoMap = new Map<string, typeof outletLevelPhotos>();
+  for (const photo of outletLevelPhotos) {
+    const bucket = outletPhotoMap.get(photo.outletId!) ?? [];
+    bucket.push(photo);
+    outletPhotoMap.set(photo.outletId!, bucket);
+  }
+
+  for (const groupedRestaurant of grouped.values()) {
+    groupedRestaurant.photos = restaurantPhotoMap.get(groupedRestaurant.id) ?? [];
+    groupedRestaurant.outlets = groupedRestaurant.outlets.map((out) => ({
+      ...out,
+      photos: outletPhotoMap.get(out.id) ?? [],
+    }));
+  }
+}
 
 // GET /restaurants/discover
 restaurantRoutes.get("/discover", async (c) => {
@@ -76,31 +194,8 @@ restaurantRoutes.get("/discover", async (c) => {
     .innerJoin(outlet, eq(restaurant.id, outlet.restaurantId))
     .where(and(...conditions, inArray(restaurant.id, idList)));
 
-  // Group outlets by restaurant
-  const grouped = new Map<string, Record<string, unknown>>();
-  for (const row of rows) {
-    if (!grouped.has(row.id)) {
-      grouped.set(row.id, {
-        id: row.id,
-        name: row.name,
-        description: row.description,
-        cuisineTags: row.cuisineTags,
-        halalCertified: row.halalCertified,
-        logo: row.logo,
-        outlets: [],
-      });
-    }
-    (grouped.get(row.id)!.outlets as Record<string, unknown>[]).push({
-      id: row.outletId,
-      label: row.outletLabel,
-      address: row.outletAddress,
-      lat: row.lat,
-      lng: row.lng,
-      isOpen: row.isOpen,
-      bogoLimit: row.bogoLimit,
-      avgTableSpend: row.avgTableSpend,
-    });
-  }
+  const grouped = groupRestaurantsFromRows(rows);
+  await attachPhotosToGroupedRestaurants(grouped);
 
   const total = Number(countResult?.count || 0);
   return paginated(c, Array.from(grouped.values()), { page, limit, total });
@@ -113,18 +208,14 @@ restaurantRoutes.get("/search", async (c) => {
     return error(c, "VALIDATION_ERROR", "Search query 'q' is required", 400);
   }
 
-  const results = await db
-    .select({
-      id: restaurant.id,
-      name: restaurant.name,
-      description: restaurant.description,
-      cuisineTags: restaurant.cuisineTags,
-      halalCertified: restaurant.halalCertified,
-    })
+  const distinctIds = await db
+    .selectDistinct({ id: restaurant.id })
     .from(restaurant)
+    .innerJoin(outlet, eq(restaurant.id, outlet.restaurantId))
     .where(
       and(
         eq(restaurant.status, "active"),
+        eq(outlet.status, "active"),
         or(
           ilike(restaurant.name, `%${q}%`),
           sql`${restaurant.cuisineTags}::text ILIKE ${"%" + q + "%"}`,
@@ -134,7 +225,42 @@ restaurantRoutes.get("/search", async (c) => {
     )
     .limit(20);
 
-  return success(c, results);
+  if (distinctIds.length === 0) {
+    return success(c, []);
+  }
+
+  const idList = distinctIds.map((row) => row.id);
+  const rows = await db
+    .select({
+      id: restaurant.id,
+      name: restaurant.name,
+      description: restaurant.description,
+      cuisineTags: restaurant.cuisineTags,
+      halalCertified: restaurant.halalCertified,
+      logo: restaurant.logo,
+      outletId: outlet.id,
+      outletLabel: outlet.label,
+      outletAddress: outlet.address,
+      lat: outlet.lat,
+      lng: outlet.lng,
+      isOpen: outlet.isOpen,
+      bogoLimit: outlet.bogoLimit,
+      avgTableSpend: outlet.avgTableSpend,
+    })
+    .from(restaurant)
+    .innerJoin(outlet, eq(restaurant.id, outlet.restaurantId))
+    .where(
+      and(
+        eq(restaurant.status, "active"),
+        eq(outlet.status, "active"),
+        inArray(restaurant.id, idList),
+      ),
+    );
+
+  const grouped = groupRestaurantsFromRows(rows);
+  await attachPhotosToGroupedRestaurants(grouped);
+
+  return success(c, Array.from(grouped.values()));
 });
 
 // GET /restaurants/nearby — public, geolocation-based discovery
@@ -311,6 +437,12 @@ restaurantRoutes.get("/:id", async (c) => {
     .from(outlet)
     .where(and(eq(outlet.restaurantId, id), eq(outlet.status, "active")));
 
+  const restaurantLevelPhotos = await db
+    .select()
+    .from(restaurantPhoto)
+    .where(eq(restaurantPhoto.restaurantId, id))
+    .orderBy(asc(restaurantPhoto.sortOrder), asc(restaurantPhoto.createdAt));
+
   // Attach photos to their respective outlets
   const outletIds = outlets.map((o) => o.id);
   const allPhotos = outletIds.length
@@ -318,6 +450,7 @@ restaurantRoutes.get("/:id", async (c) => {
         .select()
         .from(restaurantPhoto)
         .where(inArray(restaurantPhoto.outletId, outletIds))
+        .orderBy(asc(restaurantPhoto.sortOrder), asc(restaurantPhoto.createdAt))
     : [];
 
   const outletsWithPhotos = outlets.map((o) => ({
@@ -325,7 +458,11 @@ restaurantRoutes.get("/:id", async (c) => {
     photos: allPhotos.filter((p) => p.outletId === o.id),
   }));
 
-  return success(c, { ...rest, outlets: outletsWithPhotos });
+  return success(c, {
+    ...rest,
+    photos: restaurantLevelPhotos,
+    outlets: outletsWithPhotos,
+  });
 });
 
 export { restaurantRoutes };
