@@ -34,7 +34,7 @@ export const createSubscriptionSchema = z.object({
 
 // Redemptions
 export const createRedemptionSchema = z.object({
-  outletId: z.string().uuid(),
+  outletId: z.string().min(1),
 });
 
 export const verifyRedemptionSchema = z.object({

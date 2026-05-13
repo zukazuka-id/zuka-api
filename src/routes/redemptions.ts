@@ -161,10 +161,6 @@ redemptionRoutes.get("/check/:restaurantId", requireAuth, async (c) => {
     .where(and(eq(subscription.accountId, authUser.id), eq(subscription.status, "active")))
     .limit(1);
 
-  if (!sub) {
-    return success(c, { eligible: false, remaining: 0, limit: 0 });
-  }
-
   // Get all outlets for this restaurant
   const outlets = await db
     .select({ id: outlet.id, bogoLimit: outlet.bogoLimit })
@@ -175,8 +171,13 @@ redemptionRoutes.get("/check/:restaurantId", requireAuth, async (c) => {
     return success(c, { eligible: false, remaining: 0, limit: 0 });
   }
 
-  const outletIds = outlets.map((o) => o.id);
   const limit = outlets[0].bogoLimit ?? rest.defaultBogoLimit;
+
+  if (!sub) {
+    return success(c, { eligible: false, remaining: 0, limit, reason: "no_subscription" });
+  }
+
+  const outletIds = outlets.map((o) => o.id);
 
   // Count redemptions this year across all outlets
   const yearStart = new Date(new Date().getFullYear(), 0, 1);
@@ -198,6 +199,7 @@ redemptionRoutes.get("/check/:restaurantId", requireAuth, async (c) => {
     eligible: remaining > 0,
     remaining,
     limit,
+    ...(remaining === 0 ? { reason: "already_redeemed" as const } : {}),
   });
 });
 
