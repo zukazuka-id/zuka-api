@@ -477,3 +477,144 @@ describe("POST /subscription/payment-intents", () => {
     expect(payment.qrisPayload).toBeTruthy();
   });
 });
+
+// ============================================================
+// GET /payment-intents/:paymentId — Payment Status Polling
+// ============================================================
+
+describe("GET /payment-intents/:paymentId", () => {
+  const PS_PHONE = `+628${Date.now().toString().slice(-8)}PS`;
+  let psToken = "";
+  let psUserId = "";
+  let psPaymentId = "";
+
+  beforeAll(async () => {
+    resetRateLimiterState();
+    process.env.PAYMENT_PROVIDER_MODE = "fake";
+
+    // Register and verify a test user
+    await app.request("/api/v1/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phoneNumber: PS_PHONE }),
+    });
+    const verify = await app.request("/api/v1/auth/verify-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phoneNumber: PS_PHONE, code: "123456" }),
+    });
+    const body = await verify.json();
+    psToken = body.data?.token ?? body.data?.session?.token ?? "";
+    psUserId = body.data?.user?.id ?? "";
+
+    // Create a pending payment intent for the test user
+    const piRes = await app.request("/api/v1/subscription/payment-intents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${psToken}` },
+      body: JSON.stringify({ plan: "yearly" }),
+    });
+    const piBody = await piRes.json();
+    psPaymentId = piBody.data.paymentId;
+  });
+
+  afterAll(async () => {
+    if (psUserId) {
+      await db.delete(paymentTransaction).where(eq(paymentTransaction.accountId, psUserId));
+      await db.delete(subscription).where(eq(subscription.accountId, psUserId));
+      await db.delete(inviteRedemption).where(eq(inviteRedemption.accountId, psUserId));
+      await db.delete(session).where(eq(session.userId, psUserId));
+      await db.delete(user).where(eq(user.id, psUserId));
+    }
+    delete process.env.PAYMENT_PROVIDER_MODE;
+  });
+
+  it("requires auth — returns 401 without token", async () => {
+    const res = await app.request(`/api/v1/subscription/payment-intents/${psPaymentId}`);
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 404 for non-existent payment", async () => {
+    const res = await app.request(`/api/v1/subscription/payment-intents/nonexistent-id`, {
+      headers: { Authorization: `Bearer ${psToken}` },
+    });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error.code).toBe("NOT_FOUND");
+  });
+
+  it("user cannot read another user's payment — returns 404", async () => {
+    // Create a second user
+    const phone2 = `+628${Date.now().toString().slice(-8)}X1`;
+    await app.request("/api/v1/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phoneNumber: phone2 }),
+    });
+    const verify = await app.request("/api/v1/auth/verify-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phoneNumber: phone2, code: "123456" }),
+    });
+    const vBody = await verify.json();
+    const otherToken = vBody.data?.token ?? vBody.data?.session?.token ?? "";
+    const otherUserId = vBody.data?.user?.id ?? "";
+
+    // Try to read psUserId's payment with other user's token
+    const res = await app.request(`/api/v1/subscription/payment-intents/${psPaymentId}`, {
+      headers: { Authorization: `Bearer ${otherToken}` },
+    });
+    expect(res.status).toBe(404);
+
+    // Cleanup
+    if (otherUserId) {
+      await db.delete(session).where(eq(session.userId, otherUserId));
+      await db.delete(user).where(eq(user.id, otherUserId));
+    }
+  });
+
+  it("returns payment status DTO for own payment", async () => {
+    const res = await app.request(`/api/v1/subscription/payment-intents/${psPaymentId}`, {
+      headers: { Authorization: `Bearer ${psToken}` },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.data).toMatchObject({
+      paymentId: psPaymentId,
+      status: "pending",
+      plan: "yearly",
+      amount: 475000,
+      currency: "IDR",
+      subscriptionId: null,
+      subscriptionStatus: null,
+    });
+    expect(body.data.orderId).toMatch(/^ZUKA-\d{8}-/);
+    expect(body.data.expiresAt).toBeTruthy();
+    // paidAt should be null for pending payment
+    expect(body.data.paidAt).toBeNull();
+  });
+
+  it("auto-expires pending payment past its expiresAt", async () => {
+    // Manually set expiresAt to the past for the test payment
+    const pastDate = new Date(Date.now() - 60 * 1000); // 1 minute ago
+    await db
+      .update(paymentTransaction)
+      .set({ expiresAt: pastDate })
+      .where(eq(paymentTransaction.id, psPaymentId));
+
+    const res = await app.request(`/api/v1/subscription/payment-intents/${psPaymentId}`, {
+      headers: { Authorization: `Bearer ${psToken}` },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.status).toBe("expired");
+
+    // Verify the DB was also updated
+    const [updated] = await db
+      .select()
+      .from(paymentTransaction)
+      .where(eq(paymentTransaction.id, psPaymentId))
+      .limit(1);
+    expect(updated.status).toBe("expired");
+  });
+});

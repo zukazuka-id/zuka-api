@@ -248,6 +248,65 @@ subscriptionRoutes.post("/payment-intents", zValidator("json", createSubscriptio
   }, 201);
 });
 
+// GET /payment-intents/:paymentId — Poll payment status
+subscriptionRoutes.get("/payment-intents/:paymentId", async (c) => {
+  const user = c.get("user") as UserVars["user"];
+  const paymentId = c.req.param("paymentId");
+
+  const [payment] = await db
+    .select()
+    .from(paymentTransaction)
+    .where(eq(paymentTransaction.id, paymentId))
+    .limit(1);
+
+  if (!payment) {
+    return error(c, "NOT_FOUND", "Payment not found", 404);
+  }
+
+  // Ensure the payment belongs to the authenticated user
+  if (payment.accountId !== user.id) {
+    return error(c, "NOT_FOUND", "Payment not found", 404);
+  }
+
+  // Auto-expire pending payments past their expiry time
+  let currentStatus = payment.status;
+  if (currentStatus === "pending" && payment.expiresAt && new Date(payment.expiresAt) < new Date()) {
+    await db
+      .update(paymentTransaction)
+      .set({ status: "expired", updatedAt: new Date() })
+      .where(eq(paymentTransaction.id, payment.id));
+    currentStatus = "expired";
+  }
+
+  // Look up related subscription if linked
+  let subscriptionId: string | null = null;
+  let subscriptionStatus: string | null = null;
+  if (payment.subscriptionId) {
+    const [sub] = await db
+      .select({ id: subscription.id, status: subscription.status })
+      .from(subscription)
+      .where(eq(subscription.id, payment.subscriptionId))
+      .limit(1);
+    if (sub) {
+      subscriptionId = sub.id;
+      subscriptionStatus = sub.status;
+    }
+  }
+
+  return success(c, {
+    paymentId: payment.id,
+    orderId: payment.orderId,
+    status: currentStatus,
+    plan: payment.plan,
+    amount: payment.amount,
+    currency: payment.currency,
+    expiresAt: payment.expiresAt,
+    paidAt: payment.paidAt,
+    subscriptionId,
+    subscriptionStatus,
+  });
+});
+
 // ── Helpers ──────────────────────────────────────────────────────────
 
 function generateDateStamp(): string {
