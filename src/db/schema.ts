@@ -216,6 +216,49 @@ export const subscription = pgTable("subscription", {
   subscriptionAccountStatusIdx: index("subscription_account_status_idx").on(t.accountId, t.status),
 }));
 
+export const paymentTransaction = pgTable("payment_transaction", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  accountId: text("account_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  subscriptionId: text("subscription_id")
+    .references(() => subscription.id, { onDelete: "set null" }),
+  orderId: text("order_id").notNull(),           // partnerReferenceNo sent to Yukk
+  provider: text("provider").notNull(),           // yukk
+  providerReference: text("provider_reference"),  // referenceNo from Yukk
+  method: text("method").notNull(),               // qris
+  amount: integer("amount").notNull(),            // in IDR (no decimals)
+  currency: text("currency").default("IDR").notNull(),
+  plan: text("plan").notNull(),                   // monthly | yearly
+  status: text("status").default("pending").notNull(), // pending | paid | expired | failed | cancelled
+  qrisPayload: text("qris_payload"),              // EMV string from Yukk qrContent
+  timeoutInSeconds: integer("timeout_in_seconds"),
+  expiresAt: timestamp("expires_at"),
+  paidAt: timestamp("paid_at"),
+  rrn: text("rrn"),                              // Retrieval Reference Number for disputes
+  rawCreateResponse: jsonb("raw_create_response"),
+  rawWebhookPayload: jsonb("raw_webhook_payload"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => ({
+  paymentTransactionAccountStatusIdx: index("payment_transaction_account_status_idx").on(t.accountId, t.status),
+  paymentTransactionOrderIdx: index("payment_transaction_order_idx").on(t.orderId),
+  paymentTransactionStatusCheck: check(
+    "payment_transaction_status_check",
+    sql`${t.status} in ('pending', 'paid', 'expired', 'failed', 'cancelled')`
+  ),
+  paymentTransactionMethodCheck: check(
+    "payment_transaction_method_check",
+    sql`${t.method} in ('qris')`
+  ),
+  paymentTransactionProviderCheck: check(
+    "payment_transaction_provider_check",
+    sql`${t.provider} in ('yukk')`
+  ),
+}));
+
 export const redemption = pgTable("redemption", {
   id: text("id")
     .primaryKey()
@@ -374,6 +417,7 @@ export const userRelations = relations(user, ({ many }) => ({
   authCredentials: many(authCredential),
   roles: many(accountRole),
   subscriptions: many(subscription),
+  payments: many(paymentTransaction),
   redemptions: many(redemption),
   sentInvites: many(invite, { relationName: "referrer" }),
   receivedInvites: many(inviteRedemption),
@@ -437,6 +481,17 @@ export const subscriptionRelations = relations(subscription, ({ one }) => ({
   account: one(user, {
     fields: [subscription.accountId],
     references: [user.id],
+  }),
+}));
+
+export const paymentTransactionRelations = relations(paymentTransaction, ({ one }) => ({
+  account: one(user, {
+    fields: [paymentTransaction.accountId],
+    references: [user.id],
+  }),
+  subscription: one(subscription, {
+    fields: [paymentTransaction.subscriptionId],
+    references: [subscription.id],
   }),
 }));
 

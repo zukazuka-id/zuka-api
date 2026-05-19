@@ -43,6 +43,13 @@
       "when": 1777308166022,
       "tag": "0005_pale_mandarin",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1779176022644,
+      "tag": "0006_numerous_mad_thinker",
+      "breakpoints": true
     }
   ]
 }
