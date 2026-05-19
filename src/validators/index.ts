@@ -28,8 +28,26 @@ export const merchantRegisterSchema = z.object({
 });
 
 // Subscription
+const planTierEnum = z.enum([
+  "monthly",
+  "yearly",
+  "yearly_early_bird",
+  "yearly_kol",
+  "yearly_founders",
+]);
+
 export const createSubscriptionSchema = z.object({
   plan: z.enum(["monthly", "yearly"]),
+});
+
+// Payment Intents
+export const createSubscriptionPaymentIntentSchema = z.object({
+  plan: planTierEnum.default("yearly"),
+});
+
+export const grantSubscriptionSchema = z.object({
+  plan: planTierEnum,
+  reason: z.string().min(1).max(500),
 });
 
 // Redemptions
