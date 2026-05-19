@@ -52,7 +52,30 @@ describe("Subscription Integration Tests", () => {
     expect(body.data.hasSubscription).toBe(false);
   });
 
-  it("POST /subscription/create — creates annual subscription", async () => {
+  it("POST /subscription/create — returns 410 when ALLOW_UNVERIFIED_SUBSCRIPTION_CREATE is not set", async () => {
+    // Temporarily remove the env flag
+    const saved = process.env.ALLOW_UNVERIFIED_SUBSCRIPTION_CREATE;
+    delete process.env.ALLOW_UNVERIFIED_SUBSCRIPTION_CREATE;
+
+    const res = await app.request("/api/v1/subscription/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}` },
+      body: JSON.stringify({ plan: "yearly" }),
+    });
+    const body = await res.json();
+    expect(res.status).toBe(410);
+    expect(body.success).toBe(false);
+    expect(body.error.code).toBe("GONE");
+    expect(body.error.message).toContain("payment-intents");
+
+    // Restore the env flag
+    if (saved) process.env.ALLOW_UNVERIFIED_SUBSCRIPTION_CREATE = saved;
+  });
+
+  it("POST /subscription/create — creates annual subscription (with env flag)", async () => {
+    // Ensure the env flag is set for the legacy tests
+    process.env.ALLOW_UNVERIFIED_SUBSCRIPTION_CREATE = "true";
+
     const res = await app.request("/api/v1/subscription/create", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}` },
@@ -86,6 +109,9 @@ describe("Subscription Integration Tests", () => {
   });
 
   it("POST /subscription/create — monthly plan", async () => {
+    // Ensure the env flag is set for legacy /subscription/create
+    process.env.ALLOW_UNVERIFIED_SUBSCRIPTION_CREATE = "true";
+
     // Create a new user for monthly test
     const phone2 = `+628${Date.now().toString().slice(-8)}1`;
     await app.request("/api/v1/auth/register", {
@@ -127,6 +153,11 @@ describe("Invite consuming during subscription/create", () => {
   let referrerId = "";
   let freshUserId = "";
   let freshCode = "";
+
+  beforeAll(() => {
+    // Ensure the env flag is set for legacy /subscription/create
+    process.env.ALLOW_UNVERIFIED_SUBSCRIPTION_CREATE = "true";
+  });
 
   afterAll(async () => {
     if (freshUserId) {

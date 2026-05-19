@@ -20,8 +20,19 @@ type UserVars = {
 const subscriptionRoutes = new Hono<{ Variables: UserVars }>();
 subscriptionRoutes.use("*", requireAuth);
 
-// POST /subscription/create
+// POST /subscription/create — DEPRECATED: requires ALLOW_UNVERIFIED_SUBSCRIPTION_CREATE=true
 subscriptionRoutes.post("/create", zValidator("json", createSubscriptionSchema), async (c) => {
+  // Gate behind env flag — in production (no flag), return 410 Gone
+  if (!process.env.ALLOW_UNVERIFIED_SUBSCRIPTION_CREATE) {
+    return c.json({
+      success: false,
+      error: {
+        code: "GONE",
+        message: "Use POST /subscription/payment-intents to create a payment. This endpoint is deprecated.",
+      },
+    }, 410);
+  }
+
   const user = c.get("user") as UserVars["user"];
   const { plan } = c.req.valid("json");
 
