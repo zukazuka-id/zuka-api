@@ -160,6 +160,7 @@ app.use("/api/v1/invites/redeem", strictRateLimiter);
 app.use("/api/v1/invites/:code/preview", moderateRateLimiter);
 app.use("/api/v1/redemptions/verify", strictRateLimiter);
 app.use("/api/v1/subscription/create", moderateRateLimiter);
+app.use("/api/v1/subscription/payment-intents", strictRateLimiter);
 app.use("/api/v1/devices/register", strictRateLimiter);
 app.use("/api/v1/restaurants/nearby", moderateRateLimiter);
 
