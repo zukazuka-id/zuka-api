@@ -22,6 +22,7 @@ import { configRoutes } from "./routes/config.js";
 import { deviceRoutes } from "./routes/devices.js";
 import { bannerRoutes } from "./routes/banners.js";
 import { curatedListRoutes } from "./routes/curated-lists.js";
+import { webhookRoutes } from "./routes/webhooks.js";
 import { docsApp } from "./openapi-routes.js";
 
 // ── OpenAPI Spec Generation ───────────────────────────────────
@@ -151,6 +152,9 @@ app.get("/openapi.json", (c) => c.json(openApiSpec));
 
 // Better Auth handler — all /api/auth/* routes
 app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
+
+// ── Yukk Webhook Routes (root-level, no auth) ────────────────────
+app.route("/", webhookRoutes);
 
 // Rate limiting on custom auth routes
 app.use("/api/v1/auth/*", authRateLimiter);
