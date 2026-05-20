@@ -915,6 +915,7 @@ adminRoutes.get("/invites", requireAdmin, zValidator("query", adminInvitesQueryS
       referrerId: invite.referrerId,
       maxRedemptions: invite.maxRedemptions,
       redeemedCount: invite.redeemedCount,
+      planOverride: invite.planOverride,
       expiresAt: invite.expiresAt,
       createdAt: invite.createdAt,
     })
