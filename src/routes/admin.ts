@@ -29,6 +29,7 @@ import {
   updateCuratedListSchema,
   curatedListQuerySchema,
   addRestaurantToListSchema,
+  grantSubscriptionSchema,
 } from "../validators/index.js";
 import {
   user,
@@ -50,6 +51,8 @@ import {
   updateBanner,
   deleteBanner,
 } from "../lib/banner-service.js";
+import { activateSubscription } from "../lib/subscription-activation.js";
+import type { PlanTier } from "../lib/subscription-plans.js";
 import {
   getAllCuratedLists,
   createCuratedList,
@@ -232,6 +235,38 @@ adminRoutes.get("/members/:id", requireAdmin, async (c) => {
 
   return success(c, { ...member, subscriptions: subs, redemptions: reds, invites: sent });
 });
+
+adminRoutes.post(
+  "/members/:id/grant-subscription",
+  requireAdmin,
+  zValidator("json", grantSubscriptionSchema),
+  async (c) => {
+    const { id } = c.req.param();
+    const { plan, reason } = c.req.valid("json");
+
+    // Verify target user exists
+    const [targetUser] = await db
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(user.id, id))
+      .limit(1);
+
+    if (!targetUser) {
+      return error(c, "NOT_FOUND", "User not found", 404);
+    }
+
+    // Activate subscription inside a transaction
+    const newSub = await db.transaction(async (tx) => {
+      return activateSubscription(tx, {
+        accountId: id,
+        plan: plan as PlanTier,
+        paymentMethod: "admin_grant",
+      });
+    });
+
+    return success(c, { subscription: newSub, reason }, 201);
+  }
+);
 
 // ─── A2: Restaurants ────────────────────────────────────────
 
