@@ -120,6 +120,7 @@ inviteRoutes.get("/:code/preview", async (c) => {
     valid: true,
     code: result.invite.code,
     type: result.invite.type,
+    planOverride: result.invite.planOverride ?? null,
     referrerName: referrer?.name ?? null,
   });
 });

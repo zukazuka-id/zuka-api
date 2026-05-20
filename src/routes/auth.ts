@@ -42,6 +42,7 @@ authRoutes.post("/verify-otp", zValidator("json", verifyOtpSchema), async (c) =>
           userId,
           validation.invite.maxRedemptions,
           validation.invite.type,
+          validation.invite.planOverride,
         );
       });
     }

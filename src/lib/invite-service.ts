@@ -60,6 +60,7 @@ export async function claimInvite(
   accountId: string,
   maxRedemptions: number | null,
   type: string,
+  planOverride?: string | null,
 ): Promise<boolean> {
   if (type === "multi_use" && maxRedemptions !== null) {
     const [updated] = await tx
@@ -82,6 +83,7 @@ export async function claimInvite(
   await tx.insert(inviteRedemption).values({
     inviteId,
     accountId,
+    planOverride: planOverride ?? null,
     phase: "claimed",
     claimedAt: new Date(),
   }).onConflictDoNothing();

@@ -142,6 +142,13 @@ export const adminCreateInvitesSchema = z.object({
   expiresDays: z.number().int().min(1).max(365).default(30),
   type: z.enum(["single_use", "multi_use"]).default("single_use"),
   maxRedemptions: z.number().int().min(1).nullable().default(null),
+  planOverride: z.enum([
+    "monthly",
+    "yearly",
+    "yearly_early_bird",
+    "yearly_kol",
+    "yearly_founders",
+  ]).nullable().default(null),
 });
 
 // Platform Config

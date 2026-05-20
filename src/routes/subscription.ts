@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "../db/index.js";
-import { subscription, paymentTransaction } from "../db/schema.js";
+import { subscription, paymentTransaction, inviteRedemption, invite } from "../db/schema.js";
 import { eq, and, desc } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth.js";
 import { success, error } from "../lib/response.js";
@@ -118,8 +118,24 @@ subscriptionRoutes.get("/status", async (c) => {
 // POST /payment-intents — Create a payment intent for subscription purchase
 subscriptionRoutes.post("/payment-intents", zValidator("json", createSubscriptionPaymentIntentSchema), async (c) => {
   const user = c.get("user") as UserVars["user"];
-  const { plan } = c.req.valid("json");
-  const planConfig = getSubscriptionPlanConfig(plan as PlanTier);
+  const { plan: requestedPlan } = c.req.valid("json");
+
+  // ── Check for invite planOverride ──────────────────────────────
+  // If the user claimed an invite with a planOverride, use that plan instead.
+  const [claimedInvite] = await db
+    .select({ planOverride: inviteRedemption.planOverride })
+    .from(inviteRedemption)
+    .innerJoin(invite, eq(inviteRedemption.inviteId, invite.id))
+    .where(
+      and(
+        eq(inviteRedemption.accountId, user.id),
+        eq(inviteRedemption.phase, "claimed"),
+      ),
+    )
+    .limit(1);
+
+  const plan = (claimedInvite?.planOverride ?? requestedPlan) as PlanTier;
+  const planConfig = getSubscriptionPlanConfig(plan);
 
   // ── Free plan short-circuit ────────────────────────────────────
   if (isFreePlan(plan as PlanTier)) {

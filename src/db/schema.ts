@@ -289,6 +289,7 @@ export const invite = pgTable("invite", {
   type: text("type").default("single_use").notNull(), // single_use | multi_use
   maxRedemptions: integer("max_redemptions"),          // null = unlimited
   redeemedCount: integer("redeemed_count").default(0).notNull(),
+  planOverride: text("plan_override"),                 // null = default plan; valid PlanTier string otherwise
   status: text("status").default("active").notNull(),  // active | inactive
   expiresAt: timestamp("expires_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -308,6 +309,7 @@ export const inviteRedemption = pgTable(
     accountId: text("account_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    planOverride: text("plan_override"),               // captured from invite at claim time
     phase: text("phase").notNull(), // claimed | consumed
     claimedAt: timestamp("claimed_at").notNull(),
     consumedAt: timestamp("consumed_at"),

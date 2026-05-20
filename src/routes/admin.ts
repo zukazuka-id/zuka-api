@@ -895,7 +895,7 @@ adminRoutes.get("/invites", requireAdmin, zValidator("query", adminInvitesQueryS
 });
 
 adminRoutes.post("/invites/create", requireAdmin, zValidator("json", adminCreateInvitesSchema), async (c) => {
-  const { referrerId, count, expiresDays, type, maxRedemptions } = c.req.valid("json");
+  const { referrerId, count, expiresDays, type, maxRedemptions, planOverride } = c.req.valid("json");
 
   // Verify referrer exists
   const [referrer] = await db.select({ id: user.id }).from(user).where(eq(user.id, referrerId)).limit(1);
@@ -911,9 +911,10 @@ adminRoutes.post("/invites/create", requireAdmin, zValidator("json", adminCreate
       referrerId,
       type,
       maxRedemptions: type === "multi_use" ? maxRedemptions : null,
+      planOverride,
       status: "active",
       expiresAt,
-    }).returning({ id: invite.id, code: invite.code });
+    }).returning({ id: invite.id, code: invite.code, planOverride: invite.planOverride });
     codes.push(created);
   }
 
