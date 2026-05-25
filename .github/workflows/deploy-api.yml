@@ -1,0 +1,104 @@
+name: Deploy Zuka API to Lightsail
+
+on:
+  push:
+    branches:
+      - main
+      - production
+    paths:
+      - 'zuka-api/**'
+      - '.github/workflows/deploy-api.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      branch:
+        description: 'Branch to deploy (overrides default)'
+        required: false
+        type: string
+
+jobs:
+  deploy:
+    name: Deploy ${{ github.event.inputs.environment || (github.ref == 'refs/heads/production' && 'production') || 'staging' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Determine environment and branch
+        id: config
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ENV="${{ github.event.inputs.environment }}"
+            BRANCH="${{ github.event.inputs.branch }}"
+          elif [ "${{ github.ref }}" = "refs/heads/production" ]; then
+            ENV="production"
+            BRANCH="production"
+          else
+            ENV="staging"
+            BRANCH="main"
+          fi
+
+          # Manual branch override
+          if [ -n "$BRANCH" ]; then
+            BRANCH_ARG="$BRANCH"
+          else
+            BRANCH_ARG=""
+          fi
+
+          echo "env=$ENV" >> $GITHUB_OUTPUT
+          echo "branch=$BRANCH_ARG" >> $GITHUB_OUTPUT
+          echo "Deploying: environment=$ENV branch=$BRANCH_ARG"
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.LIGHTSAIL_HOST }}
+          port: ${{ secrets.LIGHTSAIL_SSH_PORT || 2222 }}
+          username: ${{ secrets.LIGHTSAIL_USER || 'deploy' }}
+          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          script_stop: true
+          command_timeout: 5m
+          script: |
+            cd ~/zuka-api
+            bash deploy/deploy.sh ${{ steps.config.outputs.env }} ${{ steps.config.outputs.branch }}
+
+      - name: Verify deployment
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.LIGHTSAIL_HOST }}
+          port: ${{ secrets.LIGHTSAIL_SSH_PORT || 2222 }}
+          username: ${{ secrets.LIGHTSAIL_USER || 'deploy' }}
+          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          script_stop: true
+          command_timeout: 30s
+          script: |
+            if [ "${{ steps.config.outputs.env }}" = "production" ]; then
+              URL="https://api.zuka.plus/health"
+            else
+              URL="https://staging-api.zuka.plus/health"
+            fi
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$URL")
+            if [ "$STATUS" = "200" ]; then
+              echo "Verification passed: $URL returned HTTP $STATUS"
+            else
+              echo "Verification FAILED: $URL returned HTTP $STATUS"
+              exit 1
+            fi
+
+      - name: Notify on failure
+        if: failure()
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.LIGHTSAIL_HOST }}
+          port: ${{ secrets.LIGHTSAIL_SSH_PORT || 2222 }}
+          username: ${{ secrets.LIGHTSAIL_USER || 'deploy' }}
+          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          script: |
+            pm2 status
+            echo "Deploy failed. Check PM2 logs: pm2 logs ${{ steps.config.outputs.env == 'production' && 'zuka-api-prod' || 'zuka-api-staging' }}"
