@@ -2,6 +2,11 @@
 # ─────────────────────────────────────────────────────────────────
 # harden.sh — System hardening for Zuka API Lightsail server
 # Run as root: sudo bash deploy/harden.sh
+#
+# IMPORTANT: This script does NOT restart ssh automatically.
+# After running, test SSH on port 2222 BEFORE restarting:
+#   ssh -p 2222 deploy@<host>
+# Then: sudo systemctl restart ssh
 # ─────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -90,34 +95,35 @@ SSHD_BACKUP="/etc/ssh/sshd_config.bak.$(date +%Y%m%d)"
 cp "$SSHD_CONFIG" "$SSHD_BACKUP"
 
 # Apply hardened SSH settings
+# NOTE: Port 22 kept open as fallback for Lightsail browser SSH.
+#       No cipher/KEX restrictions — those broke Lightsail browser auth.
 cat > /etc/ssh/sshd_config.d/99-hardened.conf << 'EOF'
 # Zuka API — Hardened SSH Configuration
+# Dual-listen: port 22 for Lightsail browser fallback, 2222 for deploy
+Port 22
 Port 2222
 PermitRootLogin no
 PasswordAuthentication no
-ChallengeResponseAuthentication no
-KbdInteractiveAuthentication no
-UsePAM no
 
-AllowUsers deploy
-
-KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org
-Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com
-MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
+AllowUsers deploy ubuntu
 
 ClientAliveInterval 300
 ClientAliveCountMax 2
 MaxAuthTries 3
 
 X11Forwarding no
-AllowTcpForwarding no
-PermitTunnel no
-AllowAgentForwarding no
 EOF
 
-echo "  SSH hardened. Backup at $SSHD_BACKUP"
+echo "  SSH config written. Backup at $SSHD_BACKUP"
 echo ""
-echo "  WARNING: SSH is now on port 2222, key-only auth, deploy user only."
-echo "  Test with: ssh -p 2222 deploy@<host> BEFORE closing this session."
+echo "  Changes (NOT yet applied — ssh not restarted):"
+echo "    - Port 22 (Lightsail browser fallback) + Port 2222"
+echo "    - Users: deploy, ubuntu"
+echo "    - Key-only auth (no passwords)"
+echo "    - Removed cipher/KEX restrictions (they broke Lightsail browser SSH)"
+echo ""
+echo "  BEFORE restarting ssh, make sure port 2222 is open in Lightsail firewall."
+echo "  Then apply: sudo systemctl restart ssh"
+echo "  Test from Mac: ssh zuka-server"
 echo ""
 echo "=== Hardening complete ==="
