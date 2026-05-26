@@ -1,4 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
+import type { ZodType } from "zod";
 
 // ── Shared types ──────────────────────────────────────────────
 
@@ -18,13 +19,13 @@ export const ErrorSchema = z.object({
   }),
 });
 
-export const SuccessSchema = <T extends z.ZodTypeAny>(dataSchema: T) =>
+export const SuccessSchema = <T extends ZodType>(dataSchema: T) =>
   z.object({
     success: z.literal(true),
     data: dataSchema,
   });
 
-export const PaginatedSchema = <T extends z.ZodTypeAny>(dataSchema: T) =>
+export const PaginatedSchema = <T extends ZodType>(dataSchema: T) =>
   z.object({
     success: z.literal(true),
     data: z.array(dataSchema),

@@ -23,7 +23,16 @@ import { deviceRoutes } from "./routes/devices.js";
 import { bannerRoutes } from "./routes/banners.js";
 import { curatedListRoutes } from "./routes/curated-lists.js";
 import { webhookRoutes } from "./routes/webhooks.js";
-import { docsApp } from "./openapi-routes.js";
+import { docsApp as _docsApp } from "./openapi-routes.js";
+
+// OpenAPIHono's type resolution fails due to zod v4 namespace incompatibility
+// in @hono/zod-openapi's internal types (z.input<>, z.output<> are zod v3 patterns).
+// Cast to the interface we actually use — this is only for spec generation, not routing.
+interface DocsApp {
+  openAPIRegistry: { registerComponent: (type: string, name: string, config: Record<string, unknown>) => void };
+  getOpenAPI31Document: (config: Record<string, unknown>) => Record<string, unknown>;
+}
+const docsApp = _docsApp as unknown as DocsApp;
 
 // ── OpenAPI Spec Generation ───────────────────────────────────
 docsApp.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", {
@@ -138,15 +147,12 @@ app.get("/health", async (c) => {
 });
 
 // ── Scalar API Docs ───────────────────────────────────────────
-app.get(
-    "/docs",
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    Scalar({
-        url: "/openapi.json",
-        theme: "purple",
-        layout: "modern",
-    } as any),
-);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+app.get("/docs", Scalar({
+    url: "/openapi.json",
+    theme: "purple",
+    layout: "modern",
+}) as any);
 
 app.get("/openapi.json", (c) => c.json(openApiSpec));
 

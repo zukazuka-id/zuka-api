@@ -147,7 +147,7 @@ redemptionRoutes.get("/check/:restaurantId", requireAuth, async (c) => {
   const [rest] = await db
     .select({ id: restaurant.id, defaultBogoLimit: restaurant.defaultBogoLimit })
     .from(restaurant)
-    .where(eq(restaurant.id, restaurantId))
+    .where(eq(restaurant.id, restaurantId!))
     .limit(1);
 
   if (!rest) {
@@ -165,7 +165,7 @@ redemptionRoutes.get("/check/:restaurantId", requireAuth, async (c) => {
   const outlets = await db
     .select({ id: outlet.id, bogoLimit: outlet.bogoLimit })
     .from(outlet)
-    .where(and(eq(outlet.restaurantId, restaurantId), eq(outlet.status, "active")));
+    .where(and(eq(outlet.restaurantId, restaurantId!), eq(outlet.status, "active")));
 
   if (outlets.length === 0) {
     return success(c, { eligible: false, remaining: 0, limit: 0 });

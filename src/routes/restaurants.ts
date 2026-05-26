@@ -17,7 +17,13 @@ import {
   getRecommendedRestaurants,
 } from "../lib/restaurant-curation-service.js";
 
-const restaurantRoutes = new Hono();
+type UserVars = {
+  user: { id: string; name: string; email: string; [key: string]: unknown };
+  session: { id: string; token: string; [key: string]: unknown };
+  userRoles: { role: string; outletId: string }[];
+};
+
+const restaurantRoutes = new Hono<{ Variables: UserVars }>();
 
 type GroupedRestaurantOutlet = {
   id: string;

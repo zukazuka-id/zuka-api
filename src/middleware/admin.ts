@@ -21,7 +21,7 @@ export async function requireAdmin(
   const user = session.user as AdminVars["admin"];
 
   if (user.banned) {
-    if (user.banExpires && new Date(user.banExpires) < new Date()) {
+    if (user.banExpires && new Date(user.banExpires as string | number | Date) < new Date()) {
       // Ban expired — allow access
     } else {
       return c.json(

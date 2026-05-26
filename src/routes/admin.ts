@@ -941,7 +941,7 @@ adminRoutes.post("/invites/create", requireAdmin, zValidator("json", adminCreate
   const codes = [];
   for (let i = 0; i < count; i++) {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    const code = Array.from(crypto.randomBytes(8)).map(b => chars[b % chars.length]).join("");
+    const code = Array.from(crypto.getRandomValues(new Uint8Array(8))).map(b => chars[b % chars.length]).join("");
     const [created] = await db.insert(invite).values({
       code,
       referrerId,
@@ -1041,12 +1041,12 @@ adminRoutes.delete("/config/:key", requireAdmin, async (c) => {
   const [existing] = await db
     .select()
     .from(platformConfig)
-    .where(eq(platformConfig.key, key))
+    .where(eq(platformConfig.key, key!))
     .limit(1);
   if (!existing) {
     return error(c, "NOT_FOUND", "Config key not found", 404);
   }
-  await db.delete(platformConfig).where(eq(platformConfig.key, key));
+  await db.delete(platformConfig).where(eq(platformConfig.key, key!));
   return success(c, { deleted: true });
 });
 
