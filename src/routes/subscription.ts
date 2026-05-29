@@ -137,6 +137,37 @@ subscriptionRoutes.post("/payment-intents", zValidator("json", createSubscriptio
   const plan = (claimedInvite?.planOverride ?? requestedPlan) as PlanTier;
   const planConfig = getSubscriptionPlanConfig(plan);
 
+  // ── Reviewer plan guard ────────────────────────────────────
+  // Reviewer plans bypass Yukk entirely — no paymentTransaction,
+  // no QRIS — so they never interfere with Yukk reconciliation.
+  if (plan === "reviewer") {
+    const reviewerPhones = (process.env.REVIEWER_PHONES ?? "").split(",").filter(Boolean);
+    const userPhone = (user as Record<string, unknown>).phoneNumber as string | undefined;
+
+    if (!userPhone || !reviewerPhones.includes(userPhone)) {
+      return error(c, "FORBIDDEN", "Reviewer access not allowed for this account", 403);
+    }
+
+    const activated = await db.transaction(async (tx) => {
+      return activateSubscription(tx, {
+        accountId: user.id,
+        plan: "reviewer",
+        paymentMethod: "reviewer",
+      });
+    });
+
+    return success(c, {
+      subscription: {
+        id: activated.id,
+        plan: activated.plan,
+        status: activated.status,
+        startDate: activated.startDate,
+        endDate: activated.endDate,
+        paymentMethod: "reviewer",
+      },
+    }, 201);
+  }
+
   // ── Free plan short-circuit ────────────────────────────────────
   if (isFreePlan(plan as PlanTier)) {
     const activated = await db.transaction(async (tx) => {

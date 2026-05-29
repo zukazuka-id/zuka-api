@@ -3,7 +3,8 @@ export type PlanTier =
   | "yearly"
   | "yearly_early_bird"
   | "yearly_kol"
-  | "yearly_founders";
+  | "yearly_founders"
+  | "reviewer";
 
 export type PlanConfig = {
   plan: PlanTier;
@@ -48,6 +49,13 @@ export const PLAN_CONFIGS: Record<PlanTier, PlanConfig> = {
     currency: "IDR",
     durationDays: 365,
     label: "Founders",
+  },
+  reviewer: {
+    plan: "reviewer",
+    amount: 1,
+    currency: "IDR",
+    durationDays: 1,
+    label: "App Review",
   },
 };
 

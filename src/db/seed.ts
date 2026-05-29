@@ -45,6 +45,7 @@ async function seed() {
       { id: "seed-manager-1", name: "Budi Santoso", email: "budi@bogogo.id", emailVerified: true, phoneNumber: "+6281234567891", phoneNumberVerified: true },
       { id: "seed-staff-1", name: "Dewi Ayu", email: "dewi@bogogo.id", emailVerified: true },
       { id: "seed-member-1", name: "Andi Wijaya", email: "andi@gmail.com", emailVerified: true, phoneNumber: "+6281234567892", phoneNumberVerified: true },
+      { id: "seed-reviewer-1", name: "App Reviewer", email: "reviewer@zuka.temp", emailVerified: false, phoneNumber: "+628888888899", phoneNumberVerified: true },
     ])
     .returning();
 

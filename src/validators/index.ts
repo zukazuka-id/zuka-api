@@ -34,6 +34,7 @@ const planTierEnum = z.enum([
   "yearly_early_bird",
   "yearly_kol",
   "yearly_founders",
+  "reviewer",
 ]);
 
 export const createSubscriptionSchema = z.object({
